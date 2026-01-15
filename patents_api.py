@@ -4,102 +4,119 @@ import pandas as pd
 import json
 from xml.etree import ElementTree as ET
 import re
+import os
 
 import CONST
 
 config = ConfigParser()
 config.read('config.ini')
 
-url = config['ODP']['URL']
-api_key = config['ODP']['KEY']
-api_base = config['ODP']['API_BASE']
-
-
-uspto_url = config['USPTO']['URL']
-uspto_api_key = config['USPTO']['KEY']
-us_pto_api_base = config['USPTO']['API_BASE']
-
-
-
 
 class NotFoundError(Exception):
-  pass
+    pass
 
 
-NAMESPACES = {
-    'uscom': 'urn:us:gov:doc:uspto:common',
-    'uspat': 'urn:us:gov:doc:uspto:patent',
-    'com': 'http://www.wipo.int/standards/XMLSchema/ST96/Common'
-}
+
+def get_patents(config, page=0, limit=100):
+    api_key = config['ODP']['KEY']
+    api_base = config['ODP']['API_BASE']
+    url = config['ODP']['URL']
+
+    r = requests.post(
+        url = 'https://api.uspto.gov/api/v1/patent/applications/search',
+        headers={api_base: api_key, 'content-type': 'application/json'},
+        json={
+            "q": '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning") OR (?PU AND comput*)',
+            "filters": [
+              {
+                  "name": "applicationMetaData.cpcClassificationBag",
+                  # Using values which end in 00 seems to broadly
+                  "value": CONST.CPC_lui_2022
+              }
+            ],
+            "rangeFilters": [
+                {
+                    "field": "applicationMetaData.filingDate",
+                    "valueFrom": "2018-08-04",
+                    "valueTo": "2026-01-01"
+                }
+            ],
+            "sort": [
+                {
+                    "field": "applicationMetaData.filingDate",
+                    "order": "desc"
+                }
+            ],
+            "fields": [
+                # only patents that have been granted have a patent number. If you are using the filing
+                # date you might select patents which don't have a patent number. Perhaps this
+                # means we need to get an application number so that when we pull from patents view
+                # we are able to find them.
+                'applicationNumberText',
+                "applicationMetaData.patentNumber",
+                "applicationMetaData.cpcClassificationBag",
+                "applicationMetaData.filingDate",
+                "inventionTitle",
+                "applicationMetaData.grantDate",
+                "applicationMetaData.applicationStatusCode",
+                # "applicationMetaData.applicationStatusDescriptionText",
+            ],
+            "pagination": {
+                "offset": page * limit,
+                "limit": limit
+            },
+            "facets": [
+                "applicationMetaData.applicationTypeLabelName",
+                "applicationMetaData.applicationStatusCode"
+            ]
+        }
+    )
+
+    data = r.json()['patentFileWrapperDataBag']
 
 
-r = requests.post(
-  'https://api.uspto.gov/api/v1/patent/applications/search',
-  headers={api_base: api_key, 'content-type': 'application/json'},
-  json={
-    "q": '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning")',
-    "filters": [
-      {
-        "name": "applicationMetaData.cpcClassificationBag",
-        # Using values which end in 00 seems to broadly
-        "value": CONST.CPC_lui_2022
-      }
-    ],
-    "rangeFilters": [
-      {
-        "field": "applicationMetaData.filingDate",
-        "valueFrom": "2018-08-04",
-        "valueTo": "2026-01-01"
-      }
-    ],
-    "sort": [
-      {
-        "field": "applicationMetaData.filingDate",
-        "order": "desc"
-      }
-    ],
-    "fields": [
-      # only patents that have been granted have a patent number. If you are using the filing
-      # date you might select patents which don't have a patent number. Perhaps this
-      # means we need to get an application number so that when we pull from patents view
-      # we are able to find them.
-      'applicationNumberText',
-      "applicationMetaData.patentNumber",
-      "applicationMetaData.cpcClassificationBag",
-      "applicationMetaData.filingDate",
-      # "applicationMetaData.applicationStatusDescriptionText",
-    ],
-    "pagination": {
-      "offset": 0,
-      "limit": 5
-    },
-    "facets": [
-      "applicationMetaData.applicationTypeLabelName",
-      "applicationMetaData.applicationStatusCode"
-    ]
-  }
-)
-# print(r)
-data = r.json()['patentFileWrapperDataBag']
 
-patent_numbers = [row['applicationMetaData'].get('patentNumber') for row in data]
-application_numbers = [row['applicationNumberText'] for row in data]
+    def raw_to_row(raw):
+        parsing_dict = {
+            "applicationNumberText": 'application_number',
+            "applicationMetaData.patentNumber": 'patent_number',
+            "applicationMetaData.cpcClassificationBag": "cpcs",
+            "applicationMetaData.filingDate": 'filing_date',
+            "inventionTitle": "invention_title",
+            "applicationMetaData.grantDate": "grant_date",
+            "applicationMetaData.applicationStatusCode": "status_code"
+        }
+
+    csv_file = 'patents.csv'
+
+    # First batch - write with headers
+    if not os.path.exists(csv_file):
+        df.to_csv(csv_file, index=False)
+    else:
+        # Subsequent batches - append without headers
+        df.to_csv(csv_file, mode='a', header=False, index=False)
+
+
+    return df
 
 
 # # Possible documents to grab: ['ABST', 'SPEC', ]
-def get_docs(application_number):
-  r = requests.get(
-    f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
-    headers={api_base: api_key},
-    params={
-      "documentCodes": ["SPEC"]
-    }
-  )
-  try:
-    docs_bag = r.json()['documentBag']
-  except KeyError:
-    print(r.json())
-  return docs_bag
+def get_docs(application_number, config):
+    api_key = config['ODP']['KEY']
+    api_base = config['ODP']['API_BASE']
+
+    r = requests.get(
+        f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
+        headers={api_base: api_key},
+        params={
+            "documentCodes": ["SPEC"]
+        }
+    )
+    try:
+        docs_bag = r.json()['documentBag']
+    except KeyError:
+        print(r.json())
+    return docs_bag
 
 
 def extract_abstract(xml_string):
@@ -108,7 +125,7 @@ def extract_abstract(xml_string):
         root = ET.fromstring(xml_string)
 
         # Find the ABSTRACT heading
-        headings = root.findall('.//uscom:Heading', NAMESPACES)
+        headings = root.findall('.//uscom:Heading', CONST.NAMESPACES)
         abstract_heading_id = None
 
         for heading in headings:
@@ -118,7 +135,7 @@ def extract_abstract(xml_string):
                 break
 
         # Find all paragraph elements
-        paragraphs = root.findall('.//uscom:P', NAMESPACES)
+        paragraphs = root.findall('.//uscom:P', CONST.NAMESPACES)
 
         # If we found an ABSTRACT heading, find the first substantial paragraph after it
         if abstract_heading_id:
@@ -182,8 +199,8 @@ def extract_spec(xml_string, sections=None, debug=False):
         root = ET.fromstring(xml_string)
 
         # Find all paragraph and heading elements
-        paragraphs = root.findall('.//uscom:P', NAMESPACES)
-        headings = root.findall('.//uscom:Heading', NAMESPACES)
+        paragraphs = root.findall('.//uscom:P', CONST.NAMESPACES)
+        headings = root.findall('.//uscom:Heading', CONST.NAMESPACES)
 
         if debug:
             print(f"Found {len(headings)} headings and {len(paragraphs)} paragraphs")
@@ -290,15 +307,17 @@ def get_document_code(xml_string):
     """Extract document code (e.g., ABST, SPEC, DRWD) from XML."""
     try:
         root = ET.fromstring(xml_string)
-        doc_code = root.find('.//uscom:DocumentCode', NAMESPACES)
+        doc_code = root.find('.//uscom:DocumentCode', CONST.NAMESPACES)
         return doc_code.text if doc_code is not None else None
     except Exception as e:
         print(f"Error getting document code: {e}")
         return None
 
-def parse_xml(docs):
+def parse_xml(docs, config):
     """Parse USPTO XML documents and extract information."""
     xml_url = None
+    api_key = config['ODP']['KEY']
+    api_base = config['ODP']['API_BASE']
 
     # Find XML document URL
     for doc in docs:
@@ -374,25 +393,27 @@ def parse_xml(docs):
     return results
 
 
+application_numbers = get_patents(config, limit=6)
 
-for application_number in application_numbers:
-  docs_bag = get_docs(application_number)
 
-  for item in docs_bag:
-    print(f"Patent {application_number}")
+# for application_number in application_numbers:
+#     docs_bag = get_docs(application_number, config)
 
-    docs = item['downloadOptionBag']
-    try:
-      results = parse_xml(docs)
-    except NotFoundError:
-      continue
+#     for item in docs_bag:
+#         print(f"Patent {application_number}")
 
-    abstract_doc = next((r for r in results if r['document_code'] == 'ABST'), None)
-    if abstract_doc:
-        print(abstract_doc['abstract'])
+#         docs = item['downloadOptionBag']
+#         try:
+#             results = parse_xml(docs, config)
+#         except NotFoundError:
+#             continue
 
-    spec_doc = next((r for r in results if r['document_code'] == 'SPEC'), None)
-    if spec_doc:
-        print(spec_doc['spec'])
+#         abstract_doc = next((r for r in results if r['document_code'] == 'ABST'), None)
+#         if abstract_doc:
+#             print(abstract_doc['abstract'])
+
+#         spec_doc = next((r for r in results if r['document_code'] == 'SPEC'), None)
+#         if spec_doc:
+#             print(spec_doc['spec'])
 
 
