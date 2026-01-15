@@ -56,7 +56,7 @@ def get_patents(config, page=0, limit=100):
                 "applicationMetaData.patentNumber",
                 "applicationMetaData.cpcClassificationBag",
                 "applicationMetaData.filingDate",
-                "inventionTitle",
+                "applicationMetaData.inventionTitle",
                 "applicationMetaData.grantDate",
                 "applicationMetaData.applicationStatusCode",
                 # "applicationMetaData.applicationStatusDescriptionText",
@@ -77,15 +77,28 @@ def get_patents(config, page=0, limit=100):
 
 
     def raw_to_row(raw):
+
+        meta_data = raw['applicationMetaData']
+
+        raw.update(meta_data)
         parsing_dict = {
             "applicationNumberText": 'application_number',
-            "applicationMetaData.patentNumber": 'patent_number',
-            "applicationMetaData.cpcClassificationBag": "cpcs",
-            "applicationMetaData.filingDate": 'filing_date',
+            "patentNumber": 'patent_number',
+            "cpcClassificationBag": "cpcs",
+            "filingDate": 'filing_date',
             "inventionTitle": "invention_title",
-            "applicationMetaData.grantDate": "grant_date",
-            "applicationMetaData.applicationStatusCode": "status_code"
+            "grantDate": "grant_date",
+            "applicationStatusCode": "status_code"
         }
+
+        row = {}
+        for k, v in parsing_dict.items():
+            row[v] = raw.get(k, None)
+        return row
+
+    rows = [raw_to_row(raw) for raw in data]
+
+    df = pd.DataFrame(rows)
 
     csv_file = 'patents.csv'
 
@@ -95,7 +108,6 @@ def get_patents(config, page=0, limit=100):
     else:
         # Subsequent batches - append without headers
         df.to_csv(csv_file, mode='a', header=False, index=False)
-
 
     return df
 
@@ -393,8 +405,9 @@ def parse_xml(docs, config):
     return results
 
 
-application_numbers = get_patents(config, limit=6)
+df = get_patents(config, limit=6)
 
+print(df)
 
 # for application_number in application_numbers:
 #     docs_bag = get_docs(application_number, config)
