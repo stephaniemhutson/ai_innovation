@@ -26,7 +26,7 @@ def get_patents(config, page=0, limit=100):
         url = 'https://api.uspto.gov/api/v1/patent/applications/search',
         headers={api_base: api_key, 'content-type': 'application/json'},
         json={
-            "q": '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning") OR (?PU AND comput*)',
+            "q": '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning") OR (?PU AND comput*) OR (cooling)',
             "filters": [
               {
                   "name": "applicationMetaData.cpcClassificationBag",
@@ -94,9 +94,14 @@ def get_patents(config, page=0, limit=100):
         row = {}
         for k, v in parsing_dict.items():
             row[v] = raw.get(k, None)
+
+        if row.get('cpcs'):
+            row['cpcs'] = ",".join(row['cpcs'])
         return row
 
     rows = [raw_to_row(raw) for raw in data]
+
+
 
     df = pd.DataFrame(rows)
 

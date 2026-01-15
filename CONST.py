@@ -256,7 +256,30 @@ CPC_lui_2022 = [
     # "H04R25/507", # Electric hearing aids
     # "Y10S128/924", # Surgery
     # "Y10S128/925",
-    "Y10S706" # Data processing: artificial intelligence
+    "Y10S706", # Data processing: artificial intelligence
+
+
+    # From ChatGPT -- cooling and energy efficiency
+    "F28D*", # Facility level efficiency
+    "F28F*", # DETAILS OF HEAT-EXCHANGE
+    "F28C*", # HEAT-EXCHANGE APPARATUS
+    "F24F5/*", # Air-conditioning systems or apparatus not covered by F24F 1/00
+    "F24F11/*", # Control or safety arrangements
+    "F24F3/*", # Air-conditioning systems in which conditioned primary air is supplied from one or
+    # more central stations to distributing units in the rooms or spaces where it may receive
+    # secondary treatment; Apparatus specially designed for such systems
+    "F25B*", # REFRIGERATION MACHINES, PLANTS OR SYSTEMS
+    "F25D*", # REFRIGERATORS; COLD ROOMS
+    "G06F1/*", # Compute–cooling coordination
+    "G06F1/32*",
+    "G06F1/26*",
+    "Y02B30/*", # Energy efficient heating, ventilation or air conditioning
+    "C09K*", # Materials / long-run innovation
+    "C23C*", # COATING METALLIC MATERIAL; COATING MATERIAL WITH METALLIC MATERIAL
+    "H01L23/*", # Materials / long-run innovation
+    "H01L27/*", # Materials / long-run innovation
+    "H05K7/*", # Cooling of electronic equipment
+    "H10D*", # Energy efficiency
 ]
 
 NAMESPACES = {
