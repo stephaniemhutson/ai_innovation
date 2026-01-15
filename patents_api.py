@@ -17,21 +17,24 @@ class NotFoundError(Exception):
 
 
 
-def get_patents(config, page=0, limit=100):
+def get_patents(config, page=0, limit=100, cpcs=None):
     api_key = config['ODP']['KEY']
     api_base = config['ODP']['API_BASE']
     url = config['ODP']['URL']
+
+    # query = '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning") OR (?PU AND comput*) OR abstract:(cooling)'
+
+    cpcs = cpcs if cpcs else CONST.CPC_lui_2022
 
     r = requests.post(
         url = 'https://api.uspto.gov/api/v1/patent/applications/search',
         headers={api_base: api_key, 'content-type': 'application/json'},
         json={
-            "q": '("data center*" OR datacenter*) OR (A?I OR AI OR "artificial intelligence" OR "machine learning") OR (?PU AND comput*) OR (cooling)',
             "filters": [
               {
                   "name": "applicationMetaData.cpcClassificationBag",
                   # Using values which end in 00 seems to broadly
-                  "value": CONST.CPC_lui_2022
+                  "value": cpcs
               }
             ],
             "rangeFilters": [
@@ -410,9 +413,26 @@ def parse_xml(docs, config):
     return results
 
 
-df = get_patents(config, limit=6)
+length = 10000
+page = 0
+error_count = 0
+while length >= 100:
+    try:
+        df = get_patents(config, page=page, limit=100)
+        error_count = 0
+    except KeyError as e:
+        error_count += 1
+        if error_count <= 3:
+            print(f"Failed to get patents for page {page}. Trying again")
+            continue
+        else:
+            print(f"Errored 3 times on page {page}. Returning.")
+            break
 
-print(df)
+    length = len(df)
+    print(f"Selected {length} new patents from page {page} and added to the csv.")
+    page +=1
+
 
 # for application_number in application_numbers:
 #     docs_bag = get_docs(application_number, config)

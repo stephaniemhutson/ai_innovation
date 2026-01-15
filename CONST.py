@@ -181,13 +181,13 @@ CPC_lui_2022 = [
     "G06N3/08",
     "G06N3/084",
     "G06N3/086",
-    "G06N5", # Computing arrangements using knowledge-based models
+    "G06N5/*", # Computing arrangements using knowledge-based models
     "G06N5/00",
     "G06N5/02",
     "G06N5/043",
     "G06N7/023", # Computing arrangements based on specific mathematical models
     "G06N7/046",
-    "G06N20", # Machine learning
+    "G06N20/*", # Machine learning
     "G06N20/00",
     "G06N20/10",
     "G06N20/20",
