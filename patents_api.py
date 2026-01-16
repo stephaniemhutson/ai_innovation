@@ -62,7 +62,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
                 "applicationMetaData.inventionTitle",
                 "applicationMetaData.grantDate",
                 "applicationMetaData.applicationStatusCode",
-                # "applicationMetaData.applicationStatusDescriptionText",
+                "applicationMetaData.applicationStatusDescriptionText",
             ],
             "pagination": {
                 "offset": page * limit,
@@ -91,7 +91,8 @@ def get_patents(config, page=0, limit=100, cpcs=None):
             "filingDate": 'filing_date',
             "inventionTitle": "invention_title",
             "grantDate": "grant_date",
-            "applicationStatusCode": "status_code"
+            "applicationStatusCode": "status_code",
+            "applicationStatusDescriptionText": "status_desc",
         }
 
         row = {}
