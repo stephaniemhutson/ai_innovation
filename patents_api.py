@@ -189,7 +189,7 @@ def extract_abstract(xml_string):
                         for child in p:
                             if child.tail:
                                 text_parts.append(child.tail)
-                        abstract_text = ''.join(text_parts).strip()
+                        abstract_text = ' '.join(text_parts).strip()
 
                         # Skip short paragraphs (likely page numbers or docket numbers)
                         # and return the first substantial paragraph
@@ -210,7 +210,6 @@ def extract_abstract(xml_string):
             # Return first paragraph with substantial content (>50 chars)
             if len(abstract_text) > 50:
                 return abstract_text
-
         return None
     except Exception as e:
         print(f"Error parsing abstract: {e}")
@@ -229,12 +228,10 @@ def extract_spec(xml_string, debug=False):
 
         for heading in headings:
             heading_text = ''.join(heading.itertext()).strip().upper()
-            print(heading_text)
             if 'SUMMARY' in heading_text:
                 summary_heading_id = heading.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
             elif 'BACKGROUND' in heading_text:
                 background_heading_id = heading.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
-
 
         if summary_heading_id:
             summary_heading_num = int(summary_heading_id.split('-')[1]) if '-' in summary_heading_id else None
@@ -245,7 +242,7 @@ def extract_spec(xml_string, debug=False):
         else:
             background_heading_num = None
 
-        if background_heading_num and summary_heading_num and background_heading_num > summary_heading_num:
+        if background_heading_num and summary_heading_num and background_heading_num < summary_heading_num:
             look_background_first = 1
         else:
             look_background_first = 0
@@ -258,44 +255,63 @@ def extract_spec(xml_string, debug=False):
             'background': []
         }
 
+        # Some backgrounds and summaries are quite long. In the interest of efficiency, limit to
+        # 5 paragraphs for each sections.
+        max_paragraphs = 10
+        count = 0
         for child in root:
             p_id = child.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
             if not p_id:
                 continue
-
             # Extract paragraph number (e.g., "p-3" -> 3)
             p_num = int(p_id.split('-')[1]) if '-' in p_id else 0
-
             text = child.text
             if check_for_summary and p_num > summary_heading_num:
-                if child.text:
+                if text:
                     # check for headings
                     if (len(text) > 0 and
-                        not text.startswith('[') and
-                        len(text) < 50 and  # Headings should be short
-                        not text.replace('.', '').replace('-', '').isdigit()
+                        (not text.startswith('[') or not text.startswith('(')) and # indicates a paragraph
+                        len(text) < 50   # Headings should be short
+                        # not text.replace('.', '').replace('-', '').isdigit()
                     ):
                         check_for_summary = False
-                        check_for_background = background_heading_num is not None
+                        check_for_background = background_heading_num is not None and not look_background_first
+                        count = 0
+                        continue
+                    if count >= max_paragraphs:
+                        check_for_summary = False
+                        check_for_background = background_heading_num is not None and not look_background_first
+                        count = 0
                         continue
                     text_parts['summary'].append(child.text)
+                    count +=1
 
             elif check_for_background and p_num > background_heading_num:
-                if child.text:
+                if text:
                     if (len(text) > 0 and
-                        not text.startswith('[') and
-                        len(text) < 50 and  # Headings should be short
-                        not text.replace('.', '').replace('-', '').isdigit()
+                        (not text.startswith('[') or not text.startswith('(')) and
+                        len(text) < 50   # Headings should be short
+                        # not text.replace('.', '').replace('-', '').isdigit()
                     ):
                         if look_background_first:
                             check_for_summary = True
                             check_for_background = False
-                        break
+                            count = 0
+                            continue
+                        check_for_background = False
+                        check_for_summary = summary_heading_num is not None and look_background_first
+                        count = 0
+                        continue
+                    if count >= max_paragraphs:
+                        check_for_background = False
+                        check_for_summary = summary_heading_num is not None and look_background_first
+                        count = 0
+                        continue
                     text_parts['background'].append(child.text)
-
+                    count += 1
         results = {
-            'summary': "\n".join(text_parts['summary']),
-            'background': "\n".join(text_parts['background'])
+            'summary': " ".join(text_parts['summary']),
+            'background': " ".join(text_parts['background'])
         }
         return results
     except Exception as e:
@@ -314,82 +330,84 @@ def get_document_code(xml_string):
         print(f"Error getting document code: {e}")
         return None
 
-def parse_xml(docs, config):
+def parse_all_xml(docs, config):
     """Parse USPTO XML documents and extract information."""
-    xml_url = None
+    xml_urls = {}
     api_key = config['ODP']['KEY']
     api_base = config['ODP']['API_BASE']
 
     # Find XML document URL
     for doc in docs:
+        doc_code = doc['DOC_TYPE']
         if doc['mimeTypeIdentifier'] == "XML":
-            xml_url = doc['downloadUrl']
-            break
+            xml_urls[doc['downloadUrl']] = doc_code
 
-    if not xml_url:
+    if len(xml_urls) == 0:
         raise NotFoundError(f'XML not found. Available docs: {[doc['mimeTypeIdentifier'] for doc in docs]}')
 
-    # Download XML content
-    r = requests.get(
-        xml_url,
-        headers={api_base: api_key}
-    )
-
-    # Try multiple encoding strategies
-    content = None
-    encodings = ['utf-8', 'latin-1', 'iso-8859-1', 'cp1252']
-
-    for encoding in encodings:
-        try:
-            content = r.content.decode(encoding)
-            # print(f"Successfully decoded with {encoding}")
-            break
-        except UnicodeDecodeError:
-            continue
-
-    # If all encodings fail, use utf-8 with error handling
-    if content is None:
-        content = r.content.decode('utf-8', errors='replace')
-        print("Decoded with utf-8 using 'replace' error handling")
-
-    # Alternative: use 'ignore' to skip invalid characters
-    # content = r.content.decode('utf-8', errors='ignore')
-
-    # Split into individual XML documents
-    elements = content.split('<?xml version="1.0" encoding="utf-8"?>')[1:]
-    elements = [
-        '<?xml version="1.0" encoding="utf-8"?>' + e.split('</uspat:SpecificationDocument>')[0] + '</uspat:SpecificationDocument>'
-        for e in elements
-    ]
-
-    # Process each document
     results = []
-    for i, xml_doc in enumerate(elements):
-        doc_code = get_document_code(xml_doc)
+    for xml_url, doc_code in xml_urls.items():
+        # Download XML content
+        r = requests.get(
+            xml_url,
+            headers={api_base: api_key}
+        )
 
-        # Extract information based on document type
-        result = {
-            'index': i,
-            'document_code': doc_code,
-        }
+        # Try multiple encoding strategies
+        content = None
+        encodings = ['utf-8', 'latin-1', 'iso-8859-1', ]
 
-        # If it's an abstract document, extract the abstract text
-        if doc_code == 'ABST':
-            abstract = extract_abstract(xml_doc)
-            result['abstract'] = abstract
-            # print(f"\nDocument {i} - {doc_code}")
-            # print(f"Abstract: {abstract}")
+        for encoding in encodings:
+            try:
+                content = r.content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
 
-        if doc_code == 'SPEC':
-            spec = extract_spec(xml_doc)
-            result['background'] = spec.get('background', "")
-            result['summary'] = spec.get('summary', "")
-            # print(f"\nDocument {i} - {doc_code}")
-            # print(f"Spec: {spec}")
-        # else:
-        #     print(f"\nDocument {i} - {doc_code}")
+        # If all encodings fail, use utf-8 with error handling
+        if content is None:
+            ecoding = 'utf-8 -- replace errors'
+            content = r.content.decode('utf-8', errors='replace')
+            print("Decoded with utf-8 using 'replace' error handling")
 
-        results.append(result)
+        # Alternative: use 'ignore' to skip invalid characters
+
+        # Split into individual XML documents
+        elements = content.split('<?xml version="1.0" encoding="utf-8"?>')[1:]
+
+        elements = [
+            '<?xml version="1.0" encoding="utf-8"?>' + e.split('</uspat:SpecificationDocument>')[0] + '</uspat:SpecificationDocument>'
+            for e in elements
+        ]
+
+        # Process each document
+        for i, xml_doc in enumerate(elements):
+            # Extract information based on document type
+            if "<uspat:SpecificationDocument" not in xml_doc[:100]:
+                # wrong document type.
+                continue
+            result = {
+                'index': i,
+                'document_code': doc_code,
+            }
+
+            # If it's an abstract document, extract the abstract text
+            if doc_code == 'ABST':
+                abstract = extract_abstract(xml_doc)
+                result['abstract'] = abstract
+
+            if doc_code == 'SPEC':
+                spec = extract_spec(xml_doc)
+                result['background'] = spec.get('background', "")
+                result['summary'] = spec.get('summary', "")
+            else:
+                try:
+                    abstract = extract_abstract(xml_doc)
+                    result['abstract'] = abstract
+                except Exception as e:
+                    print(traceback.format_exc())
+
+            results.append(result)
 
     # pick best results
     best_result = {
@@ -429,26 +447,62 @@ def get_all_patents(config):
     return
 
 
-def get_bulk_docs(df, page, config, limit=2):
+def get_bulk_docs(df, page, config, limit=100):
 
-    patents = df[page*limit:(page +1)*limit]
-
+    patents = df[page*limit:(page +1)*limit].copy()
+    last_application_number = None
     for i, row in patents.iterrows():
+        application_number = row['application_number']
+        print(f"\n***** PATENT {application_number} ****")
         specs = get_docs(row['application_number'], config, ['SPEC'])
         abstracts = get_docs(row['application_number'], config, ['ABST'])
+
+        abstract_bags = [opt for bag in abstracts for opt in bag['downloadOptionBag']]
+        for bag in abstract_bags:
+            bag['DOC_TYPE'] = "ABST"
+
+        spec_bags = [opt for bag in specs for opt in bag['downloadOptionBag']]
+        for bag in spec_bags:
+            bag['DOC_TYPE'] = "SPEC"
 
         details = {
             'abstract': None,
             'summary': None,
             'background': None,
         }
-        bags = [opt for bag in specs for opt in bag['downloadOptionBag']] + [opt for bag in abstracts for opt in bag['downloadOptionBag']]
+        bags = spec_bags + abstract_bags
 
         try:
-            res = parse_xml(bags, config)
+            details = parse_all_xml(bags, config)
+
         except NotFoundError:
             print(f"No XML found for {row['application_number']}")
-        print(res)
+        # Update the dataframe at this specific index
+        patents.loc[i, 'abstract'] = details['abstract']
+        patents.loc[i, 'summary'] = details['summary']
+        patents.loc[i, 'background'] = details['background']
+
+
+    csv_file = './patents_with_details.csv'
+
+    # First batch - write with headers
+    if not os.path.exists(csv_file):
+        patents.to_csv(csv_file, index=False)
+    else:
+        # Subsequent batches - append without headers
+        patents.to_csv(csv_file, mode='a', header=False, index=False)
+
+    return application_number
+
 
 df = pd.read_csv('./filtered_patents.csv')
-get_bulk_docs(df, 4, config)
+page = 5
+limit = 50
+
+while page < 100:
+    last_application_number = get_bulk_docs(df, page, config, limit=limit)
+    if last_application_number is None:
+        print(f"Seem to have completed on application page {page - 1}")
+        break
+    print(f"Completed Page {page} with limit {limit}. Final Application number: {last_application_number}")
+    page += 1
