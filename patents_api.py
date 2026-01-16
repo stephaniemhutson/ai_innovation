@@ -6,6 +6,7 @@ from xml.etree import ElementTree as ET
 import re
 import os
 import traceback
+import time
 
 import CONST
 
@@ -137,7 +138,15 @@ def get_docs(application_number, config, doc_types):
     try:
         docs_bag = r.json()['documentBag']
     except KeyError:
-        print(r.json())
+        if r.json().get('message'):
+            if r.json()['message'] == "Too Many Requests":
+                print("Too many requests, wait for 2 minutes and try to continue")
+                # pause for 2 minutes to let the API chill for a sec.
+                time.sleep(120)
+                docs_bag = get_docs(application_number, config, doc_types)
+        else:
+            print(r.json())
+            raise
     return docs_bag
 
 
