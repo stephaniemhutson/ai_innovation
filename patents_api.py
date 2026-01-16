@@ -5,6 +5,7 @@ import json
 from xml.etree import ElementTree as ET
 import re
 import os
+import traceback
 
 import CONST
 
@@ -122,7 +123,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
 
 
 # # Possible documents to grab: ['ABST', 'SPEC', ]
-def get_docs(application_number, config):
+def get_docs(application_number, config, doc_types):
     api_key = config['ODP']['KEY']
     api_base = config['ODP']['API_BASE']
 
@@ -130,7 +131,7 @@ def get_docs(application_number, config):
         f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
         headers={api_base: api_key},
         params={
-            "documentCodes": ["SPEC"]
+            "documentCodes": doc_types
         }
     )
     try:
@@ -164,7 +165,7 @@ def extract_abstract(xml_string):
             heading_num = int(abstract_heading_id.split('-')[1]) if '-' in abstract_heading_id else 0
 
             # Find the first paragraph after the heading with substantial content
-            for p in paragraphs:
+            for p in root:
                 p_id = p.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
                 if p_id:
                     # Extract paragraph number (e.g., "p-3" -> 3)
@@ -183,7 +184,7 @@ def extract_abstract(xml_string):
 
                         # Skip short paragraphs (likely page numbers or docket numbers)
                         # and return the first substantial paragraph
-                        if len(abstract_text) > 50:
+                        if len(abstract_text) > 100:
                             return abstract_text
 
         # Fallback: if no ABSTRACT heading found, try the old method
@@ -204,125 +205,95 @@ def extract_abstract(xml_string):
         return None
     except Exception as e:
         print(f"Error parsing abstract: {e}")
+        print(traceback.format_exc())
         return None
 
-def extract_spec(xml_string, sections=None, debug=False):
-    """
-    Extract specification text from USPTO XML document.
 
-    Args:
-        xml_string: The XML string to parse
-        sections: List of section names to extract (e.g., ['SUMMARY', 'BACKGROUND'])
-                 If None, extracts all sections
-        debug: If True, prints debugging information
-    """
+def extract_spec(xml_string, debug=False):
     try:
         root = ET.fromstring(xml_string)
 
-        # Find all paragraph and heading elements
-        paragraphs = root.findall('.//uscom:P', CONST.NAMESPACES)
+        # Find the SUMMARY heading
         headings = root.findall('.//uscom:Heading', CONST.NAMESPACES)
-
-        if debug:
-            print(f"Found {len(headings)} headings and {len(paragraphs)} paragraphs")
-
-        # Create a mapping of all elements by their position in the document
-        element_map = {}
+        summary_heading_id = None
+        background_heading_id = None
 
         for heading in headings:
-            heading_text = ''.join(heading.itertext()).strip()
-            heading_id = heading.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
+            heading_text = ''.join(heading.itertext()).strip().upper()
+            print(heading_text)
+            if 'SUMMARY' in heading_text:
+                summary_heading_id = heading.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
+            elif 'BACKGROUND' in heading_text:
+                background_heading_id = heading.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
 
-            # Only include actual section headings (short, all caps, no paragraph numbers)
-            # Skip if it starts with [ or is very long (likely a paragraph misidentified as heading)
-            if (len(heading_text) > 0 and
-                not heading_text.startswith('[') and
-                len(heading_text) < 100 and  # Headings should be short
-                not heading_text.replace('.', '').replace('-', '').isdigit()):
-                element_map[heading_id] = {
-                    'type': 'heading',
-                    'text': heading_text,
-                    'id': heading_id
-                }
-                if debug:
-                    print(f"Heading: '{heading_text}' (id: {heading_id})")
-            else:
-                paragraphs = paragraphs.append(heading)
-                if debug:
-                    print(f"SKIPPED Heading (too long or starts with [): '{heading_text[:50]}...' (id: {heading_id})")
 
-        for p in paragraphs:
-            p_number = p.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}pNumber')
-            p_id = p.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
+        if summary_heading_id:
+            summary_heading_num = int(summary_heading_id.split('-')[1]) if '-' in summary_heading_id else None
+        else:
+            summary_heading_num = None
+        if background_heading_id:
+            background_heading_num = int(background_heading_id.split('-')[1]) if '-' in background_heading_id else None
+        else:
+            background_heading_num = None
 
-            # Get ALL text content from the paragraph, including nested elements
-            paragraph_text = ''.join(p.itertext()).strip()
+        if background_heading_num and summary_heading_num and background_heading_num > summary_heading_num:
+            look_background_first = 1
+        else:
+            look_background_first = 0
 
-            # Remove common metadata patterns
-            # Filter out attorney docket numbers, page numbers, and reference IDs
-            if paragraph_text and not (
-                paragraph_text.startswith('Attorney Docket') or
-                paragraph_text.startswith('{') or
-                len(paragraph_text) < 20 or  # Very short snippets
-                paragraph_text.replace('.', '').replace('-', '').replace('/', '').isdigit()  # Just numbers
-            ):
-                element_map[p_id] = {
-                    'type': 'paragraph',
-                    'text': paragraph_text,
-                    'p_number': p_number,
-                    'id': p_id
-                }
-                if debug:
-                    print(f"Paragraph {p_number} (id: {p_id}): {paragraph_text[:100]}...")
+        check_for_summary = summary_heading_num is not None and not look_background_first
+        check_for_background = not check_for_summary and background_heading_num is not None
 
-        # Sort elements by their ID to maintain document order
-        sorted_elements = sorted(element_map.values(), key=lambda x: x['id'])
+        text_parts = {
+            'summary': [],
+            'background': []
+        }
 
-        # If specific sections requested, filter to only those sections
-        if sections:
-            sections_upper = [s.upper() for s in sections]
-            filtered_elements = []
-            current_section = None
-            include_current = False
+        for child in root:
+            p_id = child.get('{http://www.wipo.int/standards/XMLSchema/ST96/Common}id')
+            if not p_id:
+                continue
 
-            for element in sorted_elements:
-                if element['type'] == 'heading':
-                    heading_text_upper = element['text'].upper()
-                    # Check if ANY of the requested sections appear in this heading
-                    include_current = any(section in heading_text_upper for section in sections_upper)
-                    current_section = element['text']
+            # Extract paragraph number (e.g., "p-3" -> 3)
+            p_num = int(p_id.split('-')[1]) if '-' in p_id else 0
 
-                    if include_current:
-                        filtered_elements.append(element)
-                        if debug:
-                            print(f"Including section: {current_section}")
-                    else:
-                        if debug:
-                            print(f"Skipping section: {current_section}")
-                elif include_current:
-                    filtered_elements.append(element)
-                    if debug:
-                        print(f"Including paragraph under {current_section}")
+            text = child.text
+            if check_for_summary and p_num > summary_heading_num:
+                if child.text:
+                    # check for headings
+                    if (len(text) > 0 and
+                        not text.startswith('[') and
+                        len(text) < 50 and  # Headings should be short
+                        not text.replace('.', '').replace('-', '').isdigit()
+                    ):
+                        check_for_summary = False
+                        check_for_background = background_heading_num is not None
+                        continue
+                    text_parts['summary'].append(child.text)
 
-            sorted_elements = filtered_elements
+            elif check_for_background and p_num > background_heading_num:
+                if child.text:
+                    if (len(text) > 0 and
+                        not text.startswith('[') and
+                        len(text) < 50 and  # Headings should be short
+                        not text.replace('.', '').replace('-', '').isdigit()
+                    ):
+                        if look_background_first:
+                            check_for_summary = True
+                            check_for_background = False
+                        break
+                    text_parts['background'].append(child.text)
 
-        if debug:
-            print(f"Final element count: {len(sorted_elements)}")
-
-        # Build the specification text
-        spec_parts = []
-        for element in sorted_elements:
-            if element['type'] == 'heading':
-                spec_parts.append(f"\n{element['text']}\n")
-            else:
-                spec_parts.append(element['text'])
-
-        spec_text = '\n\n'.join(spec_parts).strip()
-        return spec_text
-
+        results = {
+            'summary': "\n".join(text_parts['summary']),
+            'background': "\n".join(text_parts['background'])
+        }
+        return results
     except Exception as e:
         print(f"Error parsing specification: {e}")
-        return None
+        print(traceback.format_exc())
+        raise
+
 
 def get_document_code(xml_string):
     """Extract document code (e.g., ABST, SPEC, DRWD) from XML."""
@@ -362,7 +333,7 @@ def parse_xml(docs, config):
     for encoding in encodings:
         try:
             content = r.content.decode(encoding)
-            print(f"Successfully decoded with {encoding}")
+            # print(f"Successfully decoded with {encoding}")
             break
         except UnicodeDecodeError:
             continue
@@ -391,68 +362,84 @@ def parse_xml(docs, config):
         result = {
             'index': i,
             'document_code': doc_code,
-            'xml': xml_doc
         }
 
         # If it's an abstract document, extract the abstract text
         if doc_code == 'ABST':
             abstract = extract_abstract(xml_doc)
             result['abstract'] = abstract
-            print(f"\nDocument {i} - {doc_code}")
-            print(f"Abstract: {abstract}")
+            # print(f"\nDocument {i} - {doc_code}")
+            # print(f"Abstract: {abstract}")
 
         if doc_code == 'SPEC':
-            spec = extract_spec(xml_doc, sections=['SUMMARY', 'BACKGROUND', 'TECHNICAL FIELD'], debug = True)
-            result['spec'] = spec
-            print(f"\nDocument {i} - {doc_code}")
-            print(f"Spec: {spec}")
-        else:
-            print(f"\nDocument {i} - {doc_code}")
+            spec = extract_spec(xml_doc)
+            result['background'] = spec.get('background', "")
+            result['summary'] = spec.get('summary', "")
+            # print(f"\nDocument {i} - {doc_code}")
+            # print(f"Spec: {spec}")
+        # else:
+        #     print(f"\nDocument {i} - {doc_code}")
 
         results.append(result)
 
-    return results
+    # pick best results
+    best_result = {
+        'abstract': "",
+        'background': "",
+        'summary': "",
+    }
+    sections = ['abstract', 'background', 'summary']
+    for result in results:
+        for section in sections:
+            if result.get(section) and len(result[section]) > len(best_result[section]):
+                best_result[section] = result[section]
+
+    return best_result
+
+def get_all_patents(config):
+    length = 10000
+    page = 0
+    error_count = 0
+    limit = 100
+    while length >= limit:
+        try:
+            df = get_patents(config, page=page, limit=limit)
+            error_count = 0
+        except KeyError as e:
+            error_count += 1
+            if error_count <= 3:
+                print(f"Failed to get patents for page {page}. Trying again")
+                continue
+            else:
+                print(f"Errored 3 times on page {page}. Returning.")
+                break
+
+        length = len(df)
+        print(f"Selected {length} new patents from page {page} and added to the csv.")
+        page +=1
+    return
 
 
-length = 10000
-page = 0
-error_count = 0
-while length >= 100:
-    try:
-        df = get_patents(config, page=page, limit=100)
-        error_count = 0
-    except KeyError as e:
-        error_count += 1
-        if error_count <= 3:
-            print(f"Failed to get patents for page {page}. Trying again")
-            continue
-        else:
-            print(f"Errored 3 times on page {page}. Returning.")
-            break
+def get_bulk_docs(df, page, config, limit=2):
 
-    length = len(df)
-    print(f"Selected {length} new patents from page {page} and added to the csv.")
-    page +=1
+    patents = df[page*limit:(page +1)*limit]
 
+    for i, row in patents.iterrows():
+        specs = get_docs(row['application_number'], config, ['SPEC'])
+        abstracts = get_docs(row['application_number'], config, ['ABST'])
 
-# for application_number in application_numbers:
-#     docs_bag = get_docs(application_number, config)
+        details = {
+            'abstract': None,
+            'summary': None,
+            'background': None,
+        }
+        bags = [opt for bag in specs for opt in bag['downloadOptionBag']] + [opt for bag in abstracts for opt in bag['downloadOptionBag']]
 
-#     for item in docs_bag:
-#         print(f"Patent {application_number}")
+        try:
+            res = parse_xml(bags, config)
+        except NotFoundError:
+            print(f"No XML found for {row['application_number']}")
+        print(res)
 
-#         docs = item['downloadOptionBag']
-#         try:
-#             results = parse_xml(docs, config)
-#         except NotFoundError:
-#             continue
-
-#         abstract_doc = next((r for r in results if r['document_code'] == 'ABST'), None)
-#         if abstract_doc:
-#             print(abstract_doc['abstract'])
-
-#         spec_doc = next((r for r in results if r['document_code'] == 'SPEC'), None)
-#         if spec_doc:
-#             print(spec_doc['spec'])
-
-
+df = pd.read_csv('./filtered_patents.csv')
+get_bulk_docs(df, 4, config)
