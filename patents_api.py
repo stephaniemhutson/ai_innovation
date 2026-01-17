@@ -495,14 +495,27 @@ def get_bulk_docs(df, page, config, limit=100):
     return application_number
 
 
+def save_batch(page):
+    open('batch.txt', 'w').write(str(page))
+
+def load_batch():
+    try:
+        return int(open('batch.txt').read())
+    except:
+        return 0
+
 df = pd.read_csv('./filtered_patents.csv')
-page = 5
+last_page = load_batch()
+print(last_page)
+page = last_page + 1
+time.sleep(15)
 limit = 50
 
-while page < 100:
+while page < last_page + 100:
     last_application_number = get_bulk_docs(df, page, config, limit=limit)
     if last_application_number is None:
         print(f"Seem to have completed on application page {page - 1}")
         break
     print(f"Completed Page {page} with limit {limit}. Final Application number: {last_application_number}")
+    save_batch(page)
     page += 1
