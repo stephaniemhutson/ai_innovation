@@ -345,8 +345,20 @@ def parse_all_xml(docs, config):
     if len(xml_urls) == 0:
         raise NotFoundError(f'XML not found. Available docs: {[doc['mimeTypeIdentifier'] for doc in docs]}')
 
-    results = []
+    best_result = {
+        'abstract': "",
+        'background': "",
+        'summary': "",
+    }
+    sections = ['abstract', 'background', 'summary']
+
     for xml_url, doc_code in xml_urls.items():
+
+        # If we've already gotten what we need from the abstract and the spec, then don't look at extra documents.
+        if doc_code == "ABST" and len(best_result['abstract']) >= 300:
+            continue
+        elif doc_code == "SPEC" and len(best_result['background']) >= 300 and len(best_result['summary']) >= 300:
+            continue
         # Download XML content
         r = requests.get(
             xml_url,
@@ -407,19 +419,9 @@ def parse_all_xml(docs, config):
                 except Exception as e:
                     print(traceback.format_exc())
 
-            results.append(result)
-
-    # pick best results
-    best_result = {
-        'abstract': "",
-        'background': "",
-        'summary': "",
-    }
-    sections = ['abstract', 'background', 'summary']
-    for result in results:
-        for section in sections:
-            if result.get(section) and len(result[section]) > len(best_result[section]):
-                best_result[section] = result[section]
+            for section in sections:
+                if result.get(section) and len(result[section]) > len(best_result[section]):
+                    best_result[section] = result[section]
 
     return best_result
 
