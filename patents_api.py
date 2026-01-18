@@ -449,9 +449,12 @@ def get_all_patents(config):
 
 def get_bulk_docs(df, page, config, limit=100):
 
-    patents = df[page*limit:(page +1)*limit].copy()
+    patents = df[page*limit:(page +1)*limit].to_dict('records')
+    # patents = df[page*limit:(page +1)*limit].copy()
     last_application_number = None
-    for i, row in patents.iterrows():
+    # for i, row in patents.iterrows():
+    updated = []
+    for i, row in enumerate(patents):
         application_number = row['application_number']
         print(f"\n***** PATENT {application_number} ****")
         specs = get_docs(row['application_number'], config, ['SPEC'])
@@ -478,19 +481,21 @@ def get_bulk_docs(df, page, config, limit=100):
         except NotFoundError:
             print(f"No XML found for {row['application_number']}")
         # Update the dataframe at this specific index
-        patents.loc[i, 'abstract'] = details['abstract']
-        patents.loc[i, 'summary'] = details['summary']
-        patents.loc[i, 'background'] = details['background']
+        row['abstract'] = details['abstract']
+        row['summary'] = details['summary']
+        row['background'] = details['background']
+        updated.append(row)
 
-
-    csv_file = './patents_with_details.csv'
+    updated_patents = pd.DataFrame(updated)
+    batch = page//100
+    csv_file = f'./patents_with_details__{batch}.csv'
 
     # First batch - write with headers
     if not os.path.exists(csv_file):
-        patents.to_csv(csv_file, index=False)
+        updated_patents.to_csv(csv_file, index=False)
     else:
         # Subsequent batches - append without headers
-        patents.to_csv(csv_file, mode='a', header=False, index=False)
+        updated_patents.to_csv(csv_file, mode='a', header=False, index=False)
 
     return application_number
 
@@ -508,10 +513,9 @@ df = pd.read_csv('./filtered_patents.csv')
 last_page = load_batch()
 print(last_page)
 page = last_page + 1
-time.sleep(15)
 limit = 50
 
-while page < last_page + 100:
+while page < last_page + 10000:
     last_application_number = get_bulk_docs(df, page, config, limit=limit)
     if last_application_number is None:
         print(f"Seem to have completed on application page {page - 1}")
