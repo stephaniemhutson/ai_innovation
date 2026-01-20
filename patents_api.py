@@ -140,9 +140,9 @@ def get_docs(application_number, config, doc_types):
     except KeyError:
         if r.json().get('message'):
             if r.json()['message'] == "Too Many Requests":
-                print("Too many requests, wait for 2 minutes and try to continue")
-                # pause for 2 minutes to let the API chill for a sec.
-                time.sleep(120)
+                print("Too many requests, wait for 1.5 minutes and try to continue")
+                # pause for 1.5 minutes to let the API chill for a sec.
+                time.sleep(90)
                 docs_bag = get_docs(application_number, config, doc_types)
         else:
             print(r.json())
