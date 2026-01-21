@@ -7,6 +7,7 @@ import re
 import os
 import traceback
 import time
+import argparse
 
 import CONST
 
@@ -452,13 +453,12 @@ def get_all_patents(config):
 def get_bulk_docs(df, page, config, limit=100):
 
     patents = df[page*limit:(page +1)*limit].to_dict('records')
-    # patents = df[page*limit:(page +1)*limit].copy()
-    last_application_number = None
     # for i, row in patents.iterrows():
     updated = []
+    application_number = None
     for i, row in enumerate(patents):
         application_number = row['application_number']
-        print(f"\n***** PATENT {application_number} ****")
+        print(f"***** PATENT {application_number} ****")
         specs = get_docs(row['application_number'], config, ['SPEC'])
         abstracts = get_docs(row['application_number'], config, ['ABST'])
 
@@ -502,26 +502,38 @@ def get_bulk_docs(df, page, config, limit=100):
     return application_number
 
 
-def save_batch(page):
-    open('batch.txt', 'w').write(str(page))
+def save_batch(page, batch_file):
+    open(batch_file, 'w').write(str(page))
 
-def load_batch():
+
+def load_batch(batch_file):
     try:
-        return int(open('batch.txt').read())
+        return int(open(batch_file).read())
     except:
         return 0
 
-df = pd.read_csv('./filtered_patents.csv')
-last_page = load_batch()
-print(last_page)
-page = last_page + 1
-limit = 50
 
-while page < last_page + 10000:
-    last_application_number = get_bulk_docs(df, page, config, limit=limit)
-    if last_application_number is None:
-        print(f"Seem to have completed on application page {page - 1}")
-        break
-    print(f"Completed Page {page} with limit {limit}. Final Application number: {last_application_number}")
-    save_batch(page)
-    page += 1
+def batch_pull_details(batch_file='batch.txt'):
+    df = pd.read_csv('./filtered_patents.csv')
+    last_page = load_batch(batch_file)
+    print(last_page)
+    page = last_page + 1
+    limit = 50
+
+    while page < last_page + 1000:
+        last_application_number = get_bulk_docs(df, page, config, limit=limit)
+        if last_application_number is None:
+            print(f"Seem to have completed on application page {page - 1}")
+            break
+        print(f"Completed Page {page} with limit {limit}. Final Application number: {last_application_number}")
+        save_batch(page, batch_file)
+        page += 1
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Batch pull patent details')
+    parser.add_argument('-f', '--file', type=str, default='batch.txt',
+                        help='Name of the batch file (default: batch.txt)')
+    args = parser.parse_args()
+
+    batch_pull_details(args.file)
