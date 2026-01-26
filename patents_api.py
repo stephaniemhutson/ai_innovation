@@ -506,21 +506,21 @@ def save_batch(page, batch_file):
     open(batch_file, 'w').write(str(page))
 
 
-def load_batch(batch_file):
+def load_batch(batch_file, first_page):
     try:
         return int(open(batch_file).read())
     except:
-        return 0
+        return first_page
 
 
-def batch_pull_details(batch_file='batch.txt'):
+def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
     df = pd.read_csv('./filtered_patents.csv')
-    last_page = load_batch(batch_file)
-    print(last_page)
-    page = last_page + 1
+    most_recent_page = load_batch(batch_file, first_page)
+    print(most_recent_page)
+    page = most_recent_page + 1
     limit = 50
 
-    while page < last_page + 1000:
+    while page < last_page:
         last_application_number = get_bulk_docs(df, page, config, limit=limit)
         if last_application_number is None:
             print(f"Seem to have completed on application page {page - 1}")
@@ -534,6 +534,10 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Batch pull patent details')
     parser.add_argument('-f', '--file', type=str, default='batch.txt',
                         help='Name of the batch file (default: batch.txt)')
+    parser.add_argument('-lp', '--lastpage', type=int, default=1000,
+                        help='The last page to pull from')
+    parser.add_argument('-fp', '--firstpage', type=int, default=1000,
+                        help='The first page to pull from. Only needed if batch file empty')
     args = parser.parse_args()
 
-    batch_pull_details(args.file)
+    batch_pull_details(args.file, args.lastpage, args.firstpage)
