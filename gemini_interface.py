@@ -256,9 +256,9 @@ def convert_csv_to_jsonl(csv_path, jsonl_path, system_instruction):
                         "parts": [{"text": create_prompt(row)}]
                     }
                 ],
-                "system_instruction": {
-                    "parts": [{"text": system_instruction}]
-                },
+                # "system_instruction": {
+                #     "parts": [{"text": system_instruction}]
+                # },
                 "generation_config": {
                     "response_mime_type": "application/json",
                     "temperature": 0.1, # Low temperature for consistency

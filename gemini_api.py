@@ -29,73 +29,6 @@ class FileManager:
         for f in self.client.files.list():
             print(f.name)
 
-def start_new_job(client):
-    with open('system_instructions.txt', 'r', encoding='utf-8') as file:
-        system_instructions = file.read()
-
-    generation_config = types.GenerateContentConfig(
-        # It's recommended by Gemini to use a temperature of 1.0, however due to the
-        # data analytic nature of this task and the desire for repeatability, it makes
-        # sense to keep th temperature low. Because of the caution against using temperature
-        # 0.0 due to some unintended consequences of the right token cannot be "found", I
-        # have set the temperature to 0.1. In comparing the a spot check between temperature 0.1
-        # and 0.0, there is relatively little variation.
-        # temperature=0.1,
-        # Because the context is designed to be fully descriptive of the task, we set the thinking
-        # level to minimal. This minimized output tokens to less than 150 tokens per task, thus
-        # minimizing the cost of API usage.
-        thinking_config=types.ThinkingConfig(
-            thinking_level="minimal"
-        ),
-        system_instruction=types.Content(
-        parts=[
-            types.Part(text= system_instructions)
-        ])
-    )
-
-    uploaded_file = client.files.upload(
-        file = 'gemini_batch_input__scale.jsonl',
-        config=types.UploadFileConfig(display_name='Innovation-test-jsonl', mime_type='application/jsonl')
-    )
-
-    print("Uploaded File:")
-    print(uploaded_file.name)
-
-    # output_config = types.BatchJobOutputConfig(
-    #     gcs_destination=types.GcsDestination(
-    #         uri="gs://your-bucket-name/output-folder/results.jsonl"
-    #     )
-    # )
-
-
-    batch_job = client.batches.create(
-        model='models/gemini-3-flash-preview',
-        src=uploaded_file.name,
-        # src="files/srj6sxbc8iud",
-        config=types.CreateBatchJobConfig(
-            display_name="AI Innovation-test",
-            # generation_config=generation_config
-        ),
-        # dest=output_config
-    )
-
-    print(f"Created batch job: {batch_job.name}")
-
-    def save_job_name(job_name):
-        with open(f'gemini_jobs.txt', 'a') as f:
-            f.write(job_name + '\n')
-
-    def load_job_names():
-        try:
-            return int(open(f'data_batches/{batch_file}').read())
-        except:
-            return first_page
-
-
-    job_name = batch_job.name
-
-    # save job name so it can be checked ig disconnected
-    save_job_name(job_name)
 
 
 class JobManager:
@@ -145,3 +78,80 @@ class JobManager:
     def check_all_jobs(self):
         with open('gemini_jobs.txt', "r") as f:
             for line in f:
+                job = line.split("\n")[0]
+                self.check_job(job)
+
+    def __save_job_name(self, job_name):
+        with open(f'gemini_jobs.txt', 'a') as f:
+            f.write(job_name + '\n')
+
+    def start_new_job(self):
+        with open('system_instructions.txt', 'r', encoding='utf-8') as file:
+            system_instructions = file.read()
+
+        generation_config = types.GenerateContentConfig(
+            # It's recommended by Gemini to use a temperature of 1.0, however due to the
+            # data analytic nature of this task and the desire for repeatability, it makes
+            # sense to keep th temperature low. Because of the caution against using temperature
+            # 0.0 due to some unintended consequences of the right token cannot be "found", I
+            # have set the temperature to 0.1. In comparing the a spot check between temperature 0.1
+            # and 0.0, there is relatively little variation.
+            # temperature=0.1,
+            # Because the context is designed to be fully descriptive of the task, we set the thinking
+            # level to minimal. This minimized output tokens to less than 150 tokens per task, thus
+            # minimizing the cost of API usage.
+            thinking_config=types.ThinkingConfig(
+                thinking_level="minimal"
+            ),
+            system_instruction=types.Content(
+            parts=[
+                types.Part(text= system_instructions)
+            ])
+        )
+
+        uploaded_file = self.client.files.upload(
+            file = 'gemini_batch_input__scale.jsonl',
+            config=types.UploadFileConfig(display_name='Innovation-test-jsonl', mime_type='application/jsonl')
+        )
+
+        print("Uploaded File:")
+        print(uploaded_file.name)
+
+        batch_job = self.client.batches.create(
+            model='models/gemini-3-flash-preview',
+            src=uploaded_file.name,
+            # src="files/srj6sxbc8iud",
+            config=types.CreateBatchJobConfig(
+                display_name="AI Innovation-test",
+                # generation_config=generation_config
+            ),
+            # dest=output_config
+        )
+
+        print(f"Created batch job: {batch_job.name}")
+
+        job_name = batch_job.name
+
+        # save job name so it can be checked ig disconnected
+        self.__save_job_name(job_name)
+
+
+if __name__ == "__main__":
+    task = input("""
+        Which task would you like to do?
+        [0] start new job
+        [1] check on status of all jobs
+        [2] check on status of one job
+    """)
+    task = int(task[0])
+    jmanager = JobManager(client)
+    if task == 0:
+        jmanager.start_new_job(client)
+    elif task == 1:
+        jmanager.check_all_jobs()
+    elif task == 2:
+        job = input("Input job name: ")
+        jmanager.check_job(job)
+
+# start_new_job(client)
+
