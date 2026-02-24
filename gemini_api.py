@@ -42,16 +42,17 @@ class FileManager:
             print(f"{i}: {f.name}")
         return self.client.files.list()
 
-    def get_file(self):
-        files = self.get_files()
-        # file_number = input("Which file? (Give a number)")
+    def get_file(self, filename=None):
+        if not filename:
+            files = self.get_files()
 
-        # file_number = int(file_number)
+            file_number = input("Which file? (Give a number)")
+            file_number = int(file_number)
+            filename = files[file_number]
 
-        file_contents = self.client.files.download(file="files/batch-pihghj1jyw0t970oznzqlv9d5wslrkm9v4ld")
+        file_contents = self.client.files.download(file=filename)
 
-        print(file_contents.decode('utf-8'))
-
+        return file_contents.decode('utf-8')
 
 
 
@@ -62,6 +63,7 @@ class JobManager:
         self.model = model
         self.__cached_content = None
         self.__bucket = Bucket('ai-innovation-output-bucket')
+        self.filemanager = FileManager(client)
 
     # poll_for_jobs(client)
     def cancel_job(self, job_name):
@@ -79,15 +81,22 @@ class JobManager:
         print(f"Polling status for job: {job_name}")
 
         while True:
-            batch_job_inline = self.client.batches.get(name=job_name)
-            if batch_job_inline.state.name in ('JOB_STATE_SUCCEEDED', 'JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_EXPIRED'):
+            batch_job = self.client.batches.get(name=job_name)
+            if batch_job.state.name in ('JOB_STATE_SUCCEEDED', 'JOB_STATE_FAILED', 'JOB_STATE_CANCELLED', 'JOB_STATE_EXPIRED'):
                 break
-            print(f"Job not finished. Current state: {batch_job_inline.state.name}. Waiting 30 seconds...")
+            print(f"Job not finished. Current state: {batch_job.state.name}. Waiting 30 seconds...")
             time.sleep(30)
 
-        print(f"Job finished with state: {batch_job_inline.state.name}")
+        print(f"Job finished with state: {batch_job.state.name}")
 
-        print(batch_job_inline.dest)
+        print(batch_job.dest)
+
+        filename = batch_job.dest.file_name
+
+        file_contents = self.filemanager.get_file(filename)
+
+        with open(f"./data/outputs/{self.model}-{filename}", "w") as f:
+            f.write(file_contents)
         # print the response
         # for i, inline_response in enumerate(batch_job_inline.dest.inlined_responses, start=1):
         #     print(f"\n--- Response {i} ---")
@@ -98,8 +107,8 @@ class JobManager:
         #         print(inline_response.response.text)
 
     def check_job(self, job_name):
-        batch_job_inline = self.client.batches.get(name=job_name)
-        print(f"Job {job_name} state: {batch_job_inline.state.name}")
+        batch_job = self.client.batches.get(name=job_name)
+        print(f"Job {job_name} state: {batch_job.state.name}")
 
     def check_all_jobs(self):
         with open('gemini_jobs.txt', "r") as f:
