@@ -577,7 +577,7 @@ def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
         page += 1
 
 
-def get_batch(batch):
+def _get_batch(batch):
     patents_cited = []
     applications_cited = []
     endpoint = f"us_patent_citation/"
@@ -600,11 +600,10 @@ def get_batch(batch):
         if not match:
             sleep_time = 31
         else:
-            sleep_time = int(match.group(1)) + 1
-        print(response)
+            sleep_time = int(match.group(1)) + 5
         print(f"Sleeping {sleep_time} seconds")
         time.sleep(sleep_time + 1)
-        return get_batch(batch)
+        return _get_batch(batch)
 
     patent_response = response
 
@@ -619,13 +618,12 @@ def get_batch(batch):
     if response.get("detail") and "Request was throttled." in response['detail']:
         match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
         if not match:
-            sleep_time = 30
+            sleep_time = 31
         else:
-            sleep_time = int(match.group(1)) + 1
-        print(response)
+            sleep_time = int(match.group(1)) + 5
         print(f"Sleeping {sleep_time} seconds")
         time.sleep(sleep_time)
-        return get_batch(batch)
+        return _get_batch(batch)
 
     return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
 
@@ -656,26 +654,110 @@ def get_patent_citations(beginning_batch=0):
 
         batch = patent_ids[(j+beginning_batch)*batch_size:(j+1+beginning_batch)*batch_size]
 
-        patents_cited, applications_cited = get_batch(batch)
+        patents_cited, applications_cited = _get_batch(batch)
         patents_cited_df = pd.DataFrame(patents_cited)
         applications_cited_df = pd.DataFrame(applications_cited)
         patents_cited_df.to_csv('./data/patents_cited.csv', mode="a", header=False, index=False)
         applications_cited_df.to_csv('./data/applications_cited.csv', mode="a", header=False, index=False)
         print(f"Finished with batch {j+beginning_batch}")
 
+def _get_patent_app_numbers(batch):
+    endpoint = f'publication/'
+    query = {
+        "q": {"document_number": batch},
+        "f": ['document_number', 'granted_pregrant_crosswalk']
+    }
+    response = requests.post(
+        f"https://search.patentsview.org/api/v1/{endpoint}",
+        headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+        json=query
+    ).json()
+
+    if response.get("detail") and "Request was throttled." in response['detail']:
+        match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+        if not match:
+            sleep_time = 31
+        else:
+            sleep_time = int(match.group(1)) + 5
+        print(f"Sleeping {sleep_time} seconds")
+        time.sleep(sleep_time)
+        return _get_patent_app_numbers(batch)
+
+    publications = response.get('publications',[])
+
+    rows = []
+
+    for pub in publications:
+        for cw in pub.get('granted_pregrant_crosswalk', []):
+            rows.append(
+                {
+                    'patent_id': cw.get('patent_id'),
+                    'application_number': cw.get('application_number'),
+                    'citation_document_number': pub.get('document_number')
+                }
+            )
+    return rows
+
+def get_application_patent_numbers(beginning_batch=0):
+
+    applications = pd.read_csv('./data/applications_cited.csv')
+
+    document_numbers = applications['citation_document_number'].unique().tolist()
+
+    batch_size = 200
+    num_batches = len(document_numbers)//batch_size + 1
+
+    for i in range(num_batches - beginning_batch):
+        batch = document_numbers[(i+beginning_batch)*batch_size:(i+1+beginning_batch)*batch_size]
+        batch = [str(b) for b in batch]
+
+        patent_application_numbers = _get_patent_app_numbers(batch)
+
+        df = pd.DataFrame(patent_application_numbers)
+        df.to_csv('./data/patent_application_citation_crosswalk.csv', mode='a', header=False, index=False)
+        print(f"Finished batch {i-beginning_batch}")
+
+
+
 if __name__ == '__main__':
+    method = input("""
+        Which method?
+
+        [1] batch_pull_details
+        [2] get_all_patents
+        [3] get_patent_citations
+        [4] get_application_patent_numbers
+    """)
+
+    method = int(method[0])
     parser = argparse.ArgumentParser(description='Batch pull patent details')
-    # parser.add_argument('-f', '--file', type=str, default='batch.txt',
-    #                     help='Name of the batch file (default: batch.txt)')
-    # parser.add_argument('-lp', '--lastpage', type=int, default=1000,
-    #                     help='The last page to pull from')
-    # parser.add_argument('-fp', '--firstpage', type=int, default=1000,
-    #                     help='The first page to pull from. Only needed if batch file empty')
-    # try:
-    #     batch_pull_details(args.file, args.lastpage, args.firstpage)
-    # except KeyboardInterrupt:
-    #     print("Gracefully exiting.")
-    # get_all_patents(config, 0)
+    parser.add_argument('-f', '--file', type=str, default='batch.txt',
+                        help='Name of the batch file (default: batch.txt)')
+    parser.add_argument('-lp', '--lastpage', type=int, default=1000,
+                        help='The last page to pull from')
+    parser.add_argument('-fp', '--firstpage', type=int, default=1000,
+                        help='The first page to pull from. Only needed if batch file empty')
     parser.add_argument('-b', '--batch', type=int, default=0)
     args = parser.parse_args()
-    get_patent_citations(args.batch)
+
+
+    if method == 1:
+        try:
+            batch_pull_details(args.file, args.lastpage, args.firstpage)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
+    elif method == 2:
+        try:
+            get_all_patents(config, 0)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
+    elif method == 3:
+        try:
+            get_patent_citations(args.batch)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
+    elif method == 4:
+        try:
+            get_application_patent_numbers(args.batch)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
