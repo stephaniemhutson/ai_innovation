@@ -596,9 +596,14 @@ def get_batch(batch):
     response = response.json()
 
     if response.get("detail") and "Request was throttled." in response['detail']:
+        match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+        if not match:
+            sleep_time = 31
+        else:
+            sleep_time = int(match.group(1)) + 1
         print(response)
-        print("Sleeping")
-        time.sleep(30)
+        print(f"Sleeping {sleep_time} seconds")
+        time.sleep(sleep_time + 1)
         return get_batch(batch)
 
     patent_response = response
@@ -612,9 +617,14 @@ def get_batch(batch):
         json=query
     ).json()
     if response.get("detail") and "Request was throttled." in response['detail']:
+        match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+        if not match:
+            sleep_time = 30
+        else:
+            sleep_time = int(match.group(1)) + 1
         print(response)
-        print("Sleeping")
-        time.sleep(30)
+        print(f"Sleeping {sleep_time} seconds")
+        time.sleep(sleep_time)
         return get_batch(batch)
 
     return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
@@ -642,18 +652,19 @@ def get_patent_citations(beginning_batch=0):
     applications_cited = []
     batch_size = 100
     num_batches = len(patent_ids) // batch_size + 1
-    for j in range(num_batches):
-        batch = patent_ids[j*batch_size:(j+1)*batch_size]
+    for j in range(num_batches-beginning_batch):
+
+        batch = patent_ids[(j+beginning_batch)*batch_size:(j+1+beginning_batch)*batch_size]
 
         patents_cited, applications_cited = get_batch(batch)
         patents_cited_df = pd.DataFrame(patents_cited)
         applications_cited_df = pd.DataFrame(applications_cited)
         patents_cited_df.to_csv('./data/patents_cited.csv', mode="a", header=False, index=False)
         applications_cited_df.to_csv('./data/applications_cited.csv', mode="a", header=False, index=False)
-        print(f"Finished with batch {j}")
+        print(f"Finished with batch {j+beginning_batch}")
 
 if __name__ == '__main__':
-    # parser = argparse.ArgumentParser(description='Batch pull patent details')
+    parser = argparse.ArgumentParser(description='Batch pull patent details')
     # parser.add_argument('-f', '--file', type=str, default='batch.txt',
     #                     help='Name of the batch file (default: batch.txt)')
     # parser.add_argument('-lp', '--lastpage', type=int, default=1000,
