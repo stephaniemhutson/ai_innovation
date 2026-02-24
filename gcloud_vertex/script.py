@@ -32,11 +32,11 @@ def run(config, model):
             api_key=config['GEMINI']['KEY']
         )
         print("You are using Gemini 3 Flash and the Gemini API")
-    # buckets_manager = Bucket()
 
-    # buckets_manager.list_blobs(BUCKET)
+    handle_inputs(client, model)
 
 
+def handle_inputs(client, model):
     task = input("""
         Which task would you like to do?
         [0] start new job
@@ -50,11 +50,10 @@ def run(config, model):
         print("Goodbye")
     else:
         task = int(task[0])
-        client = get_client()
-        jmanager = JobManager(client)
+        jmanager = gemini_api.JobManager(client, model)
         if task == 0:
             filepath = input("Where does your data come from? ")
-            jmanager.start_new_job(filepath, model)
+            jmanager.start_new_job(filepath)
         elif task == 1:
             jmanager.check_all_jobs()
         elif task == 2:
@@ -64,12 +63,12 @@ def run(config, model):
             job = input("Input job name: ")
             jmanager.poll_for_job(job)
         elif task == 4:
-            filemanage = FileManager(client)
+            filemanage = gemini_api.FileManager(client)
             task = input("""
                 [0] Get Files
                 [1] Get File
                 [2] Delete Files
-                [2] Delete one file
+                [3] Delete one file
                 """)
             task = int(task[0])
             if task == 0:
@@ -82,6 +81,4 @@ def run(config, model):
                 filename = input("Which file? ")
                 filemanage.delete_file(filename)
 
-
-    jobs_manager.start_new_job('./data/inputs/batches_0_5.jsonl', model=model)
-
+        handle_inputs(client, model)
