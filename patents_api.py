@@ -43,8 +43,8 @@ def get_patents(config, page=0, limit=100, cpcs=None):
             "rangeFilters": [
                 {
                     "field": "applicationMetaData.filingDate",
-                    "valueFrom": "2018-08-04",
-                    "valueTo": "2026-01-01"
+                    "valueFrom": "2018-01-01",
+                    "valueTo": "2026-02-05"
                 }
             ],
             "sort": [
@@ -66,6 +66,8 @@ def get_patents(config, page=0, limit=100, cpcs=None):
                 "applicationMetaData.grantDate",
                 "applicationMetaData.applicationStatusCode",
                 "applicationMetaData.applicationStatusDescriptionText",
+                "applicationMetaData.firstApplicantName",
+                "applicationMetaData.firstInventorName",
             ],
             "pagination": {
                 "offset": page * limit,
@@ -96,6 +98,8 @@ def get_patents(config, page=0, limit=100, cpcs=None):
             "grantDate": "grant_date",
             "applicationStatusCode": "status_code",
             "applicationStatusDescriptionText": "status_desc",
+            "firstInventorName": "first_inventor",
+            "firstApplicantName": "first_applicant"
         }
 
         row = {}
@@ -112,7 +116,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
 
     df = pd.DataFrame(rows)
 
-    csv_file = 'patents.csv'
+    csv_file = 'patents_02_23_2026.csv'
 
     # First batch - write with headers
     if not os.path.exists(csv_file):
@@ -125,29 +129,46 @@ def get_patents(config, page=0, limit=100, cpcs=None):
 
 
 # # Possible documents to grab: ['ABST', 'SPEC', ]
-def get_docs(application_number, config, doc_types):
+def get_docs(application_number, config, doc_types, attempts=1):
     api_key = config['ODP']['KEY']
     api_base = config['ODP']['API_BASE']
-
-    r = requests.get(
-        f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
-        headers={api_base: api_key},
-        params={
-            "documentCodes": doc_types
-        }
-    )
+    try:
+        r = requests.get(
+            f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
+            headers={api_base: api_key},
+            params={
+                "documentCodes": doc_types
+            }
+        )
+        print(r)
+    except requests.exceptions.ConnectionError:
+        print("ConnectionError, wait 60s and try again")
+        time.sleep(60)
+        r = requests.get(
+            f'https://api.uspto.gov/api/v1/patent/applications/{application_number}/documents',
+            headers={api_base: api_key},
+            params={
+                "documentCodes": doc_types
+            }
+        )
+        print(r)
     try:
         docs_bag = r.json()['documentBag']
+        # print(r.json()['documentBag'])
     except KeyError:
         if r.json().get('message'):
             if r.json()['message'] == "Too Many Requests":
-                print("Too many requests, wait for 1.5 minutes and try to continue")
-                # pause for 1.5 minutes to let the API chill for a sec.
-                time.sleep(90)
+                print("Too many requests, wait for 10 seconds and try to continue")
+                # pause for 1 minutes to let the API chill for a sec.
+                time.sleep(10)
                 docs_bag = get_docs(application_number, config, doc_types)
         else:
             print(r.json())
-            raise
+            if attempts < 3:
+                attempts +=1
+                docs_bag = get_docs(application_number, config, doc_types, attempts)
+            else:
+                raise
     return docs_bag
 
 
@@ -361,10 +382,27 @@ def parse_all_xml(docs, config):
         elif doc_code == "SPEC" and len(best_result['background']) >= 300 and len(best_result['summary']) >= 300:
             continue
         # Download XML content
-        r = requests.get(
-            xml_url,
-            headers={api_base: api_key}
-        )
+        try:
+            # print(xml_url)
+            r = requests.get(
+                xml_url,
+                headers={'X-API-KEY': api_key},
+                allow_redirects=True,
+                # timeout=30
+            )
+            print(r)
+        except requests.exceptions.Timeout:
+            print("Timed out")
+        except requests.exceptions.ConnectionError:
+            print("Connection Error, wait 60s, try again")
+            time.sleep(60)
+            r = requests.get(
+                xml_url,
+                headers={'X-API-KEY': api_key},
+                allow_redirects=True,
+                # timeout=30
+            )
+            print(r)
 
         # Try multiple encoding strategies
         content = None
@@ -409,7 +447,7 @@ def parse_all_xml(docs, config):
                 abstract = extract_abstract(xml_doc)
                 result['abstract'] = abstract
 
-            if doc_code == 'SPEC':
+            elif doc_code == 'SPEC':
                 spec = extract_spec(xml_doc)
                 result['background'] = spec.get('background', "")
                 result['summary'] = spec.get('summary', "")
@@ -426,9 +464,9 @@ def parse_all_xml(docs, config):
 
     return best_result
 
-def get_all_patents(config):
+def get_all_patents(config, first_page=0):
     length = 10000
-    page = 0
+    page = first_page
     error_count = 0
     limit = 100
     while length >= limit:
@@ -459,8 +497,16 @@ def get_bulk_docs(df, page, config, limit=100):
     for i, row in enumerate(patents):
         application_number = row['application_number']
         print(f"***** PATENT {application_number} ****")
-        specs = get_docs(row['application_number'], config, ['SPEC'])
-        abstracts = get_docs(row['application_number'], config, ['ABST'])
+        try:
+            specs = get_docs(row['application_number'], config, ['SPEC'])
+        except UnboundLocalError:
+            # try one more time
+            specs = get_docs(row['application_number'], config, ['SPEC'])
+        try:
+            abstracts = get_docs(row['application_number'], config, ['ABST'])
+        except UnboundLocalError:
+            # try one more time
+            abstracts = get_docs(row['application_number'], config, ['ABST'])
 
         abstract_bags = [opt for bag in abstracts for opt in bag['downloadOptionBag']]
         for bag in abstract_bags:
@@ -503,22 +549,23 @@ def get_bulk_docs(df, page, config, limit=100):
 
 
 def save_batch(page, batch_file):
-    open(batch_file, 'w').write(str(page))
+    open(f'data_batches/{batch_file}', 'w').write(str(page))
 
 
 def load_batch(batch_file, first_page):
     try:
-        return int(open(batch_file).read())
+        return int(open(f'data_batches/{batch_file}').read()) + 1
     except:
         return first_page
 
 
 def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
-    df = pd.read_csv('./filtered_patents.csv')
+    df = pd.read_csv('./patents_left_to_capture.csv')
+    df = df.reset_index()
     most_recent_page = load_batch(batch_file, first_page)
     print(most_recent_page)
-    page = most_recent_page + 1
-    limit = 50
+    page = most_recent_page
+    limit = 5
 
     while page < last_page:
         last_application_number = get_bulk_docs(df, page, config, limit=limit)
@@ -530,14 +577,94 @@ def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
         page += 1
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Batch pull patent details')
-    parser.add_argument('-f', '--file', type=str, default='batch.txt',
-                        help='Name of the batch file (default: batch.txt)')
-    parser.add_argument('-lp', '--lastpage', type=int, default=1000,
-                        help='The last page to pull from')
-    parser.add_argument('-fp', '--firstpage', type=int, default=1000,
-                        help='The first page to pull from. Only needed if batch file empty')
-    args = parser.parse_args()
+def get_batch(batch):
+    patents_cited = []
+    applications_cited = []
+    endpoint = f"us_patent_citation/"
 
-    batch_pull_details(args.file, args.lastpage, args.firstpage)
+    # Query with multiple patent numbers
+    query = {
+        "q": {"patent_id": batch},
+        "f": ["patent_id", "citation_patent_id", "citation_date", "citation_category"]
+    }
+    response = requests.post(
+        f"{config['USPTO']['URL']}{endpoint}",
+        headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+        json=query
+    )
+
+    response = response.json()
+
+    if response.get("detail") and "Request was throttled." in response['detail']:
+        print(response)
+        print("Sleeping")
+        time.sleep(30)
+        return get_batch(batch)
+
+    patent_response = response
+
+    endpoint = f"us_application_citation/"
+
+    query['f'] = ["patent_id", "citation_document_number", "citation_date", "citation_category"]
+    response = requests.post(
+        f"{config['USPTO']['URL']}{endpoint}",
+        headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+        json=query
+    ).json()
+    if response.get("detail") and "Request was throttled." in response['detail']:
+        print(response)
+        print("Sleeping")
+        time.sleep(30)
+        return get_batch(batch)
+
+    return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
+
+
+
+def get_patent_citations(beginning_batch=0):
+    df = pd.read_csv('./patents_for_citations_02_22_2026.csv')
+    patent_ids = df[df['patent_number'].notnull()]['patent_number'].unique().tolist()
+
+    def safe_to_int(value):
+        """
+        Safely converts a string (or other value) to a float.
+        Returns the float if conversion is successful, otherwise returns the default value.
+        """
+        try:
+            return int(float(value))
+        except (ValueError, TypeError):
+            # Catches cases where float() conversion fails (e.g., "hello", "", None)
+            return value
+    patent_ids = [safe_to_int(patent) for patent in patent_ids]
+
+    count = 1
+    patents_cited = []
+    applications_cited = []
+    batch_size = 100
+    num_batches = len(patent_ids) // batch_size + 1
+    for j in range(num_batches):
+        batch = patent_ids[j*batch_size:(j+1)*batch_size]
+
+        patents_cited, applications_cited = get_batch(batch)
+        patents_cited_df = pd.DataFrame(patents_cited)
+        applications_cited_df = pd.DataFrame(applications_cited)
+        patents_cited_df.to_csv('./data/patents_cited.csv', mode="a", header=False, index=False)
+        applications_cited_df.to_csv('./data/applications_cited.csv', mode="a", header=False, index=False)
+        print(f"Finished with batch {j}")
+
+if __name__ == '__main__':
+    # parser = argparse.ArgumentParser(description='Batch pull patent details')
+    # parser.add_argument('-f', '--file', type=str, default='batch.txt',
+    #                     help='Name of the batch file (default: batch.txt)')
+    # parser.add_argument('-lp', '--lastpage', type=int, default=1000,
+    #                     help='The last page to pull from')
+    # parser.add_argument('-fp', '--firstpage', type=int, default=1000,
+    #                     help='The first page to pull from. Only needed if batch file empty')
+    # try:
+    #     batch_pull_details(args.file, args.lastpage, args.firstpage)
+    # except KeyboardInterrupt:
+    #     print("Gracefully exiting.")
+    # get_all_patents(config, 0)
+    parser.add_argument('-b', '--batch', type=int, default=0)
+    args = parser.parse_args()
+    get_patent_citations(args.batch)
