@@ -128,6 +128,75 @@ def get_patents(config, page=0, limit=100, cpcs=None):
     return df
 
 
+def get_patent_abstracts__uspto(config, filename='./patents_02_26_2026.csv'):
+    """This only gets the abstracts for patents which are already granted.
+    Does not get abstracts for applications.
+    """
+
+    ### REPLACE FILENAME AS NECESSARY
+    df = pd.read_csv(filename)
+    df = df[df['patent_number'].notnull()]
+
+    df['patent_number'] = (
+        df['patent_number']
+        .astype(str)                    # Convert to string
+        .str.replace(r'\.0$', '', regex=True)  # Remove .0 at the end
+        .replace('nan', None)           # Replace 'nan' strings with None
+    )
+
+    def _get_batch(batch, config):
+        api_key = config['USPTO']['KEY']
+        api_base = config['USPTO']['API_BASE']
+        url = config['USPTO']['URL']
+
+
+        query = {
+            'q': {'patent_id': batch},
+            'f': ['patent_id','patent_abstract', 'granted_pregrant_crosswalk']
+        }
+
+        response = requests.post(
+            url,
+            headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+            json=query
+        ).json()
+
+        if response.get("detail") and "Request was throttled." in response['detail']:
+            match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+            if not match:
+                sleep_time = 31
+            else:
+                sleep_time = int(match.group(1)) + 5
+            print(f"Sleeping {sleep_time} seconds")
+            time.sleep(sleep_time + 1)
+            return _get_batch(batch)
+        rows = []
+        for patent in response.get('patents', []):
+            application_number = patent['granted_pregrant_crosswalk'].pop()['application_number']
+            rows.append(
+                {
+                    'patent_number': patent['patent_id'],
+                    'abstract': patent['patent_abstract'],
+                    'application_number': application_number
+                }
+            )
+        return rows
+
+
+    batch_size = 200
+    num_batches = len(df) // batch_size + 1
+
+    for i in range(num_batches):
+        batch = df[i*batch_size:(i+1)*batch_size]['patent_number'].to_list()
+
+        rows = _get_batch(batch, config)
+        pd.DataFrame(rows).to_csv('./data/added_abstract.csv', mode='a', header=False, index=False)
+        print(f"Finished batch {i}")
+
+
+
+
+
 # # Possible documents to grab: ['ABST', 'SPEC', ]
 def get_docs(application_number, config, doc_types, attempts=1):
     api_key = config['ODP']['KEY']
@@ -502,15 +571,19 @@ def get_bulk_docs(df, page, config, limit=100):
         except UnboundLocalError:
             # try one more time
             specs = get_docs(row['application_number'], config, ['SPEC'])
-        try:
-            abstracts = get_docs(row['application_number'], config, ['ABST'])
-        except UnboundLocalError:
-            # try one more time
-            abstracts = get_docs(row['application_number'], config, ['ABST'])
 
-        abstract_bags = [opt for bag in abstracts for opt in bag['downloadOptionBag']]
-        for bag in abstract_bags:
-            bag['DOC_TYPE'] = "ABST"
+        if row['abstract'] is None:
+            try:
+                abstracts = get_docs(row['application_number'], config, ['ABST'])
+            except UnboundLocalError:
+                # try one more time
+                abstracts = get_docs(row['application_number'], config, ['ABST'])
+
+            abstract_bags = [opt for bag in abstracts for opt in bag['downloadOptionBag']]
+            for bag in abstract_bags:
+                bag['DOC_TYPE'] = "ABST"
+        else:
+            abstract_bags = []
 
         spec_bags = [opt for bag in specs for opt in bag['downloadOptionBag']]
         for bag in spec_bags:
@@ -529,7 +602,7 @@ def get_bulk_docs(df, page, config, limit=100):
         except NotFoundError:
             print(f"No XML found for {row['application_number']}")
         # Update the dataframe at this specific index
-        row['abstract'] = details['abstract']
+        row['abstract'] = row['abstract'] or details['abstract']
         row['summary'] = details['summary']
         row['background'] = details['background']
         updated.append(row)
@@ -627,9 +700,63 @@ def _get_batch(batch):
 
     return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
 
+def get_patents_count(beginning_batch=0):
+    df = pd.read_csv('./data/patents_with_details/full_sample.csv')
+
+    df['patent_number'] = (
+        df['patent_number']
+        .astype(str)                    # Convert to string
+        .str.replace(r'\.0$', '', regex=True)  # Remove .0 at the end
+        .replace('nan', None)           # Replace 'nan' strings with None
+    )
+
+    patent_ids = df[df['patent_number'].notnull()]['patent_number'].unique().tolist()
+
+    batch_size = 200
+    num_batches = len(patent_ids) // batch_size + 1
+
+    def _get_batch(batch):
+        query = {
+            'q': {'patent_id': batch},
+            'f': ['patent_id', 'patent_num_times_cited_by_us_patents']
+        }
+
+        response = requests.post(
+            config['USPTO']['URL'],
+            headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+            json=query
+        ).json()
+        if response.get("detail") and "Request was throttled." in response['detail']:
+            match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+            if not match:
+                sleep_time = 31
+            else:
+                sleep_time = int(match.group(1)) + 5
+            print(f"Sleeping {sleep_time} seconds")
+            time.sleep(sleep_time)
+            return _get_batch(batch)
+        patents = response.get('patents', [])
+        rows = [
+            {
+                'patent_number': patent['patent_id'],
+                'citations': patent['patent_num_times_cited_by_us_patents']
+            }
+            for patent in patents
+        ]
+
+        return rows
+
+    for i in range(num_batches - beginning_batch):
+        batch = patent_ids[(i + beginning_batch)*batch_size:(i+1+beginning_batch)*batch_size]
+        count_citations = _get_batch(batch)
+
+        citations_df = pd.DataFrame(count_citations)
+        citations_df.to_csv('./data/citations_count.csv', mode="a", header=False, index=False)
+        print(f"Finished batch {i + beginning_batch}")
 
 
-def get_patent_citations(beginning_batch=0):
+def get_patent_citations_from_big_list(beginning_batch=0):
+
     df = pd.read_csv('./patents_for_citations_02_22_2026.csv')
     patent_ids = df[df['patent_number'].notnull()]['patent_number'].unique().tolist()
 
@@ -702,9 +829,17 @@ def get_application_patent_numbers(beginning_batch=0):
 
     applications = pd.read_csv('./data/applications_cited.csv')
 
+    applications['citation_document_number'] = (
+        applications['citation_document_number']
+        .astype(str)                    # Convert to string
+        .str.replace(r'\.0$', '', regex=True)  # Remove .0 at the end
+        .replace('nan', None)           # Replace 'nan' strings with None
+    )
+
+
     document_numbers = applications['citation_document_number'].unique().tolist()
 
-    batch_size = 200
+    batch_size = 100
     num_batches = len(document_numbers)//batch_size + 1
 
     for i in range(num_batches - beginning_batch):
@@ -725,8 +860,10 @@ if __name__ == '__main__':
 
         [1] batch_pull_details
         [2] get_all_patents
-        [3] get_patent_citations
+        [3] get_patent_citations_from_big_list
         [4] get_application_patent_numbers
+        [5] get_patents_count
+        [6] get_patent_abstracts__uspto (granted patents only)
     """)
 
     method = int(method[0])
@@ -753,11 +890,21 @@ if __name__ == '__main__':
             print("Gracefully exiting.")
     elif method == 3:
         try:
-            get_patent_citations(args.batch)
+            get_patent_citations_from_big_list(args.batch)
         except KeyboardInterrupt:
             print("Gracefully exiting.")
     elif method == 4:
         try:
             get_application_patent_numbers(args.batch)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
+    elif method == 5:
+        try:
+            get_patents_count(args.batch)
+        except KeyboardInterrupt:
+            print("Gracefully exiting.")
+    elif method == 6:
+        try:
+            get_patent_abstracts__uspto()
         except KeyboardInterrupt:
             print("Gracefully exiting.")
