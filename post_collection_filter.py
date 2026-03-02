@@ -65,13 +65,24 @@ for i in range(500):
 
 df = pd.concat(dfs, ignore_index=True)
 df = df.drop_duplicates(subset="application_number", keep="first", ignore_index=True)
+df = df.drop(columns=["first_inventor","first_applicant"])
+
+# If I were to do everything over again, this would not be necessary, but I
+# didn't manage to correctly pull the inventor when I pulled patents the first time.
+df_with_inventors = pd.read_csv('./patents_02_23_2026.csv')
+df_with_inventors = df_with_inventors[["application_number", "first_inventor","first_applicant"]]
+
+df = df.merge(df_with_inventors, on="application_number", how="left")
+
 df = df[
     [
         'application_number', 'patent_number', 'cpcs',
         'filing_date', 'invention_title', 'grant_date', 'status_code',
-        'status_desc', 'cpcs_list', 'abstract', 'summary', 'background'
+        'status_desc', 'cpcs_list', 'abstract', 'summary', 'background',
+        "first_inventor","first_applicant"
     ]
 ]
+
 df.to_csv('./data/patents_with_details/full_sample.csv')
 
 
