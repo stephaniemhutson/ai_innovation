@@ -16,11 +16,11 @@ exclusion_CPCs = [
     "G05D",     # autonomous navigation
     "B25J",     # robots
     "G06F3",    # human-computer interaction
-    "H04N21",   # selective content distribution
+    # "H04N21",   # selective content distribution
     "G10L",     # speach analysis
     "H04N5",    # cameras
     "H04N23",   # cameras
-    "G06T",     # image data processing
+    # "G06T",     # image data processing
     "G06Q"      # marketing AI
 ]
 
@@ -40,10 +40,40 @@ medical_terms = [
     "alzheimer's",
     "alzheimers",
     "biotech",
+    "hospital",
+    "surgical",
+    "radiothera",
+    "genomic"
 ]
 
-vehicular_terms = [
+other_application_terms = [
     "autonomous veh",
+    "smartphone",
+    "smartwatch",
+    "smart watch",
+    "fraud detect",
+    "billing",
+    "e-commerce",
+    "ecommerce",
+    "payroll",
+    "user interface",
+    "ui/ux",
+    "social media",
+    "video editing",
+    "mobile app",
+    "wearable",
+    "biometric",
+    "email",
+    "OLED",
+    "high-definition",
+    "augmented-real",
+    "augmented real",
+    "telematic",
+    "cruise control",
+    "traffic signal",
+    "airplane",
+    " aviat",
+    "gestur"
 ]
 
 
@@ -54,26 +84,26 @@ df_filtered = df[
     ~df['invention_title'].str.contains('|'.join(medical_terms), case=False, na=False)
 ]
 df_filtered = df_filtered[
-    ~df_filtered['invention_title'].str.contains('|'.join(vehicular_terms), case=False, na=False)
+    ~df_filtered['invention_title'].str.contains('|'.join(other_application_terms), case=False, na=False)
 ]
 
 
-abandoned_and_rejected = [
-    'Final Rejection Counted, Not Yet Mailed',
-    'Final Rejection Mailed',
-    'Expressly Abandoned  --  During Examination',
-    'Abandoned  --  Failure to Respond to an Office Action',
-    'Notice of Appeal Filed',
-    'Proceedings Terminated',
-    'Abandonment for Failure to Correct Drawings/Oath/NonPub Request',
-    'Expressly Abandoned  --  During Publication Process',
-    "Abandoned  --  After Examiner's Answer or Board of Appeals Decision",
-    'Patent Expired Due to NonPayment of Maintenance Fees Under 37 CFR 1.362',
+# abandoned_and_rejected = [
+#     'Final Rejection Counted, Not Yet Mailed',
+#     'Final Rejection Mailed',
+#     'Expressly Abandoned  --  During Examination',
+#     'Abandoned  --  Failure to Respond to an Office Action',
+#     'Notice of Appeal Filed',
+#     'Proceedings Terminated',
+#     'Abandonment for Failure to Correct Drawings/Oath/NonPub Request',
+#     'Expressly Abandoned  --  During Publication Process',
+#     "Abandoned  --  After Examiner's Answer or Board of Appeals Decision",
+#     'Patent Expired Due to NonPayment of Maintenance Fees Under 37 CFR 1.362',
+# ]
 
-]
+# df_filtered = df_filtered[
+#     ~df_filtered['status_desc'].isin(abandoned_and_rejected)
+# ]
+print(len(df_filtered))
 
-df_filtered = df_filtered[
-    ~df_filtered['status_desc'].isin(abandoned_and_rejected)
-]
-
-df_filtered.to_csv('./filtered_patents.csv')
+df_filtered.to_csv('./patents_02_05_2026_filtered.csv')
