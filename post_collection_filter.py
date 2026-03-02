@@ -1,7 +1,6 @@
 import pandas as pd
 
 
-# patents_df = pd.read_csv('./patents_02_05_2026_filtered.csv')
 dfs = []
 dfs = [pd.read_csv('./data/patents_with_details/group_1/patents_with_details.csv')]
 for i in range(500):
@@ -66,6 +65,13 @@ for i in range(500):
 
 df = pd.concat(dfs, ignore_index=True)
 df = df.drop_duplicates(subset="application_number", keep="first", ignore_index=True)
+df = df[
+    [
+        'application_number', 'patent_number', 'cpcs',
+        'filing_date', 'invention_title', 'grant_date', 'status_code',
+        'status_desc', 'cpcs_list', 'abstract', 'summary', 'background'
+    ]
+]
 df.to_csv('./data/patents_with_details/full_sample.csv')
 
 
@@ -75,6 +81,7 @@ df['summary'] = df['summary'].fillna("")
 df['background'] = df['background'].fillna("")
 df['sum_len'] = df['abstract'].str.len() + df['summary'].str.len() + df['background'].str.len()
 df = df[df["sum_len"] >= 400]
+df = df.drop(columns=["sum_len"])
 
 df = df[["application_number","patent_number","cpcs","filing_date","invention_title","grant_date","status_code","status_desc","cpcs_list","abstract","summary","background"]]
 
