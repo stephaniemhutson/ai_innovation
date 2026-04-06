@@ -8,6 +8,7 @@ import os
 import traceback
 import time
 import argparse
+import datetime as dt
 
 import CONST
 
@@ -44,7 +45,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
                 {
                     "field": "applicationMetaData.filingDate",
                     "valueFrom": "2018-01-01",
-                    "valueTo": "2026-02-05"
+                    "valueTo": "2026-04-02"
                 }
             ],
             "sort": [
@@ -59,6 +60,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
                 # means we need to get an application number so that when we pull from patents view
                 # we are able to find them.
                 'applicationNumberText',
+                'applicationMetaData.earliestPublicationNumber',
                 "applicationMetaData.patentNumber",
                 "applicationMetaData.cpcClassificationBag",
                 "applicationMetaData.filingDate",
@@ -79,7 +81,6 @@ def get_patents(config, page=0, limit=100, cpcs=None):
             ]
         }
     )
-
     data = r.json()['patentFileWrapperDataBag']
 
 
@@ -99,7 +100,8 @@ def get_patents(config, page=0, limit=100, cpcs=None):
             "applicationStatusCode": "status_code",
             "applicationStatusDescriptionText": "status_desc",
             "firstInventorName": "first_inventor",
-            "firstApplicantName": "first_applicant"
+            "firstApplicantName": "first_applicant",
+            "pctPublicationNumber": "publication_number"
         }
 
         row = {}
@@ -112,11 +114,10 @@ def get_patents(config, page=0, limit=100, cpcs=None):
 
     rows = [raw_to_row(raw) for raw in data]
 
-
-
     df = pd.DataFrame(rows)
 
-    csv_file = 'patents_02_23_2026.csv'
+    date = dt.datetime.today()
+    csv_file = f'patents_{date.year}_{date.month}_{date.day}.csv'
 
     # First batch - write with headers
     if not os.path.exists(csv_file):
@@ -128,7 +129,7 @@ def get_patents(config, page=0, limit=100, cpcs=None):
     return df
 
 
-def get_patent_abstracts__uspto(config, filename='./patents_02_26_2026.csv'):
+def get_patent_abstracts__uspto(config, filename='./patents_4_2_2026_filtered.csv'):
     """This only gets the abstracts for patents which are already granted.
     Does not get abstracts for applications.
     """
@@ -186,12 +187,13 @@ def get_patent_abstracts__uspto(config, filename='./patents_02_26_2026.csv'):
     batch_size = 200
     num_batches = len(df) // batch_size + 1
 
+    date = dt.datetime.today()
     for i in range(num_batches):
         batch = df[i*batch_size:(i+1)*batch_size]['patent_number'].to_list()
 
         rows = _get_batch(batch, config)
-        pd.DataFrame(rows).to_csv('./data/added_abstract.csv', mode='a', header=False, index=False)
-        print(f"Finished batch {i}")
+        pd.DataFrame(rows).to_csv(f'./data/added_abstract_{date.year}_{date.month}_{date.day}.csv', mode='a', header=False, index=False)
+        print(f"get_patent_abstracts__uspto -- Finished batch {i}")
 
 
 
@@ -209,7 +211,6 @@ def get_docs(application_number, config, doc_types, attempts=1):
                 "documentCodes": doc_types
             }
         )
-        print(r)
     except requests.exceptions.ConnectionError:
         print("ConnectionError, wait 60s and try again")
         time.sleep(60)
@@ -220,10 +221,8 @@ def get_docs(application_number, config, doc_types, attempts=1):
                 "documentCodes": doc_types
             }
         )
-        print(r)
     try:
         docs_bag = r.json()['documentBag']
-        # print(r.json()['documentBag'])
     except KeyError:
         if r.json().get('message'):
             if r.json()['message'] == "Too Many Requests":
@@ -232,7 +231,6 @@ def get_docs(application_number, config, doc_types, attempts=1):
                 time.sleep(10)
                 docs_bag = get_docs(application_number, config, doc_types)
         else:
-            print(r.json())
             if attempts < 3:
                 attempts +=1
                 docs_bag = get_docs(application_number, config, doc_types, attempts)
@@ -452,14 +450,12 @@ def parse_all_xml(docs, config):
             continue
         # Download XML content
         try:
-            # print(xml_url)
             r = requests.get(
                 xml_url,
                 headers={'X-API-KEY': api_key},
                 allow_redirects=True,
                 # timeout=30
             )
-            print(r)
         except requests.exceptions.Timeout:
             print("Timed out")
         except requests.exceptions.ConnectionError:
@@ -471,7 +467,6 @@ def parse_all_xml(docs, config):
                 allow_redirects=True,
                 # timeout=30
             )
-            print(r)
 
         # Try multiple encoding strategies
         content = None
@@ -633,8 +628,10 @@ def load_batch(batch_file, first_page):
 
 
 def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
-    df = pd.read_csv('./patents_left_to_capture.csv')
+    df = pd.read_csv('./patents_4_2_2026_filtered.csv')
     df = df.reset_index()
+    if "abstract" not in df.columns:
+        df['abstract'] = None
     most_recent_page = load_batch(batch_file, first_page)
     print(most_recent_page)
     page = most_recent_page
@@ -649,56 +646,6 @@ def batch_pull_details(batch_file='batch.txt', last_page=1000, first_page=0):
         save_batch(page, batch_file)
         page += 1
 
-
-def _get_batch(batch):
-    patents_cited = []
-    applications_cited = []
-    endpoint = f"us_patent_citation/"
-
-    # Query with multiple patent numbers
-    query = {
-        "q": {"patent_id": batch},
-        "f": ["patent_id", "citation_patent_id", "citation_date", "citation_category"]
-    }
-    response = requests.post(
-        f"{config['USPTO']['URL']}{endpoint}",
-        headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
-        json=query
-    )
-
-    response = response.json()
-
-    if response.get("detail") and "Request was throttled." in response['detail']:
-        match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
-        if not match:
-            sleep_time = 31
-        else:
-            sleep_time = int(match.group(1)) + 5
-        print(f"Sleeping {sleep_time} seconds")
-        time.sleep(sleep_time + 1)
-        return _get_batch(batch)
-
-    patent_response = response
-
-    endpoint = f"us_application_citation/"
-
-    query['f'] = ["patent_id", "citation_document_number", "citation_date", "citation_category"]
-    response = requests.post(
-        f"{config['USPTO']['URL']}{endpoint}",
-        headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
-        json=query
-    ).json()
-    if response.get("detail") and "Request was throttled." in response['detail']:
-        match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
-        if not match:
-            sleep_time = 31
-        else:
-            sleep_time = int(match.group(1)) + 5
-        print(f"Sleeping {sleep_time} seconds")
-        time.sleep(sleep_time)
-        return _get_batch(batch)
-
-    return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
 
 def get_patents_count(beginning_batch=0):
     df = pd.read_csv('./data/patents_with_details/full_sample.csv')
@@ -751,13 +698,16 @@ def get_patents_count(beginning_batch=0):
         count_citations = _get_batch(batch)
 
         citations_df = pd.DataFrame(count_citations)
-        citations_df.to_csv('./data/citations_count.csv', mode="a", header=False, index=False)
-        print(f"Finished batch {i + beginning_batch}")
+        if beginning_batch == 0 and i == 0:
+            citations_df.to_csv('./data/citations_count.csv', index=False)
+        else:
+            citations_df.to_csv('./data/citations_count.csv', mode="a", header=False, index=False)
+        print(f"get_patents_count -- Finished batch {i + beginning_batch}")
 
 
 def get_patent_citations_from_big_list(beginning_batch=0):
 
-    df = pd.read_csv('./patents_for_citations_02_22_2026.csv')
+    df = pd.read_csv('./data/full_post_data.csv')
     patent_ids = df[df['patent_number'].notnull()]['patent_number'].unique().tolist()
 
     def safe_to_int(value):
@@ -770,6 +720,58 @@ def get_patent_citations_from_big_list(beginning_batch=0):
         except (ValueError, TypeError):
             # Catches cases where float() conversion fails (e.g., "hello", "", None)
             return value
+
+    def _get_batch(batch):
+        patents_cited = []
+        applications_cited = []
+        endpoint = f"us_patent_citation/"
+
+        # Query with multiple patent numbers
+        query = {
+            "q": {"patent_id": batch},
+            "f": ["patent_id", "citation_patent_id", "citation_date", "citation_category"]
+        }
+        response = requests.post(
+            f"{config['USPTO']['URL']}{endpoint}",
+            headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+            json=query
+        )
+
+        response = response.json()
+
+        if response.get("detail") and "Request was throttled." in response['detail']:
+            match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+            if not match:
+                sleep_time = 31
+            else:
+                sleep_time = int(match.group(1)) + 5
+            print(f"Sleeping {sleep_time} seconds")
+            time.sleep(sleep_time + 1)
+            return _get_batch(batch)
+
+        patent_response = response
+        endpoint = f"us_application_citation/"
+
+        query['f'] = ["patent_id", "citation_document_number", "citation_date", "citation_category"]
+        response = requests.post(
+            f"{config['USPTO']['URL']}{endpoint}",
+            headers={'X-API-KEY': config["USPTO"]["KEY"], 'content-type': 'application/json'},
+            json=query
+        ).json()
+        if response.get("detail") and "Request was throttled." in response['detail']:
+            match = re.search(r'(\d+)\s*second', response['detail'], re.IGNORECASE)
+            if not match:
+                sleep_time = 31
+            else:
+                sleep_time = int(match.group(1)) + 5
+            print(f"Sleeping {sleep_time} seconds")
+            time.sleep(sleep_time)
+            return _get_batch(batch)
+
+        return patent_response.get('us_patent_citations', []), response.get('us_application_citations', [])
+
+
+
     patent_ids = [safe_to_int(patent) for patent in patent_ids]
 
     count = 1
@@ -784,9 +786,13 @@ def get_patent_citations_from_big_list(beginning_batch=0):
         patents_cited, applications_cited = _get_batch(batch)
         patents_cited_df = pd.DataFrame(patents_cited)
         applications_cited_df = pd.DataFrame(applications_cited)
-        patents_cited_df.to_csv('./data/patents_cited.csv', mode="a", header=False, index=False)
-        applications_cited_df.to_csv('./data/applications_cited.csv', mode="a", header=False, index=False)
-        print(f"Finished with batch {j+beginning_batch}")
+        if beginning_batch == 0 and j == 0:
+            patents_cited_df.to_csv('./data/patents_cited.csv', index=False)
+            applications_cited_df.to_csv('./data/applications_cited.csv', index=False)
+        else:
+            patents_cited_df.to_csv('./data/patents_cited.csv', mode="a", header=False, index=False)
+            applications_cited_df.to_csv('./data/applications_cited.csv', mode="a", header=False, index=False)
+        print(f"get_patent_citations_from_big_list -- Finished with batch {j+beginning_batch}")
 
 def _get_patent_app_numbers(batch):
     endpoint = f'publication/'
@@ -849,8 +855,11 @@ def get_application_patent_numbers(beginning_batch=0):
         patent_application_numbers = _get_patent_app_numbers(batch)
 
         df = pd.DataFrame(patent_application_numbers)
-        df.to_csv('./data/patent_application_citation_crosswalk.csv', mode='a', header=False, index=False)
-        print(f"Finished batch {i-beginning_batch}")
+        if beginning_batch == 0 and i == 0:
+            df.to_csv('./data/patent_application_citation_crosswalk.csv', index=False)
+        else:
+            df.to_csv('./data/patent_application_citation_crosswalk.csv', mode='a', header=False, index=False)
+        print(f"Finished batch {i+beginning_batch}")
 
 
 
@@ -872,7 +881,7 @@ if __name__ == '__main__':
                         help='Name of the batch file (default: batch.txt)')
     parser.add_argument('-lp', '--lastpage', type=int, default=1000,
                         help='The last page to pull from')
-    parser.add_argument('-fp', '--firstpage', type=int, default=1000,
+    parser.add_argument('-fp', '--firstpage', type=int, default=0,
                         help='The first page to pull from. Only needed if batch file empty')
     parser.add_argument('-b', '--batch', type=int, default=0)
     args = parser.parse_args()
@@ -885,7 +894,7 @@ if __name__ == '__main__':
             print("Gracefully exiting.")
     elif method == 2:
         try:
-            get_all_patents(config, 0)
+            get_all_patents(config, args.firstpage)
         except KeyboardInterrupt:
             print("Gracefully exiting.")
     elif method == 3:
@@ -905,6 +914,6 @@ if __name__ == '__main__':
             print("Gracefully exiting.")
     elif method == 6:
         try:
-            get_patent_abstracts__uspto()
+            get_patent_abstracts__uspto(config)
         except KeyboardInterrupt:
             print("Gracefully exiting.")
